@@ -66,9 +66,12 @@ try {
   assert((await readFile(resolve(browser.profile,download),'utf8')).includes('synthetic_demo'));
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
   await evaluate('document.body.classList.add("demo-nav-hidden")');
+  await wait(400);
   for(const route of ['/',...routes]) {
     await navigate(route);
-    assert(await evaluate('document.documentElement.scrollWidth <= 390'),`No horizontal page overflow: ${route}`);
+    const overflow=await evaluate('document.documentElement.scrollWidth > 390');
+    if(overflow) console.log('Overflow details',route,await evaluate(`Array.from(document.querySelectorAll('body *')).map(el=>({tag:el.tagName,id:el.id,class:typeof el.className==='string'?el.className:'',right:el.getBoundingClientRect().right,width:el.getBoundingClientRect().width})).filter(el=>el.right>391).slice(0,12)`));
+    assert(!overflow,`No horizontal page overflow: ${route}`);
   }
   if(process.env.DEMO_MOBILE_SCREENSHOT) {
     await navigate('/');
