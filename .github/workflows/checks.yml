@@ -1,15 +1,127 @@
 name: Dashboard checks
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Python checks (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
           cache: pip
-      - run: pip install -r requirements.txt
-      - run: python -m compileall -q app.py runtime.py monitoring.py vds.py historian.py diagnostics.py workspace_views.py replay.py
-      - run: python -m unittest discover -s tests -v
-      - run: docker build -t wilcoxon-vds:ci .
+      - name: Install dependencies and code checker
+        run: python -m pip install -r requirements.txt ruff==0.16.9
+      - name: Dependency compatibility
+        run: python -m pip check
+      - name: Syntax and undefined names
+        run: ruff check app.py runtime.py monitoring.py vds.py historian.py diagnostics.py workspace_views.py replay.py tests --select E9,F63,F7,F82
+      - name: Compile Python modules
+        run: python -m compileall -q app.py runtime.py monitoring.py vds.py historian.py diagnostics.py workspace_views.py replay.py
+      - name: Unit and integration tests (no hardware)
+        run: python -m unittest discover -s tests -v
+      - name: Linux launcher syntax
+        run: bash -n scripts/linux-start.sh scripts/container-smoke.sh
+
+  container:
+    name: Linux container smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t wilcoxon-vds:ci .
+      - name: Non-root startup, HTTP, and backup checks
+        run: bash scripts/container-smoke.sh wilcoxon-vds:ci
+      - name: Validate both Compose files
+        env:
+          VDS_ADMIN_PASSWORD: ci-configuration-check-only
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.image.yaml config --quiet
+
+  package:
+    name: Publish Linux container package
+    if: github.event_name != 'pull_request'
+    needs: [test, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Container image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: metadata
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=sha
+      - name: Publish AMD64 and ARM64 images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    name: Publish Linux download
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, container]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build downloadable source bundle
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=wilcoxon-vds/ --output="dist/wilcoxon-vds-linux.tar.gz" HEAD
+          cp compose.image.yaml dist/compose.image.yaml
+          cp .env.example dist/vds.env.example
+          cd dist
+          sha256sum -- ./*.tar.gz compose.image.yaml vds.env.example > SHA256SUMS
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Wilcoxon VDS ${GITHUB_REF_NAME}" --notes-file docs/release-notes.md --latest
+          fi

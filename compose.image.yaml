@@ -1,0 +1,27 @@
+name: wilcoxon-vds
+services:
+  dashboard:
+    image: ${VDS_IMAGE:-ghcr.io/dineshpalsingh1989/wilcoxon-vds:latest}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${VDS_BIND_ADDRESS:-127.0.0.1}:${VDS_PORT:-8050}:8050"
+    environment:
+      VDS_ADMIN_USER: ${VDS_ADMIN_USER:-admin}
+      VDS_ADMIN_PASSWORD: ${VDS_ADMIN_PASSWORD:?Set VDS_ADMIN_PASSWORD in .env or the shell}
+      VDS_VIEWER_USER: ${VDS_VIEWER_USER:-viewer}
+      VDS_VIEWER_PASSWORD: ${VDS_VIEWER_PASSWORD:-}
+      VDS_TREND_RETENTION_DAYS: ${VDS_TREND_RETENTION_DAYS:-0}
+      VDS_RAW_RETENTION_DAYS: ${VDS_RAW_RETENTION_DAYS:-0}
+      VDS_ALARM_RETENTION_DAYS: ${VDS_ALARM_RETENTION_DAYS:-0}
+    volumes:
+      - vds-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  vds-data:

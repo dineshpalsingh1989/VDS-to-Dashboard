@@ -1,8 +1,63 @@
 ﻿# Wilcoxon VDS Condition Monitor
 
+[![GitHub checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
+[Download for Linux](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/archive/refs/heads/main.zip)
+
 MQTT ingestion, a SQLite historian, measurement-aware alarms, diagnostic plots,
 and advisory health agents for Wilcoxon VDS130 data. The dashboard also exposes
 selected values and data quality through Modbus TCP and OPC UA.
+
+## Download and run on Linux
+
+Install [Docker Engine and the Docker Compose plugin](https://docs.docker.com/engine/install/)
+first (Compose 2.20 or newer). The container includes Python and the application's
+dependencies. Linux AMD64 PCs/servers and ARM64 systems use the same launcher;
+32-bit Raspberry Pi operating systems are not supported by the published images.
+
+```bash
+curl -fL https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest/download/wilcoxon-vds-linux.tar.gz -o wilcoxon-vds-linux.tar.gz
+curl -fL https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest/download/SHA256SUMS -o SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf wilcoxon-vds-linux.tar.gz
+cd wilcoxon-vds
+bash scripts/linux-start.sh --build
+```
+
+Open **http://127.0.0.1:8050** on that Linux machine. Sign in with `admin` and the
+generated `VDS_ADMIN_PASSWORD` saved in `.env`. The launcher keeps that file private
+and preserves an existing configuration. Configure your MQTT broker in the dashboard.
+For a remote Linux host, run `ssh -L 8050:127.0.0.1:8050 user@linux-host` from your
+own computer, then open the same browser address locally.
+
+To download current source without waiting for a release, use **Source ZIP** above,
+extract it, and run `bash scripts/linux-start.sh --build` inside its folder.
+
+### Run the prebuilt container package
+
+Once the package is public, use the same extracted folder with:
+
+```bash
+bash scripts/linux-start.sh --image
+```
+
+This pulls `ghcr.io/dineshpalsingh1989/wilcoxon-vds:latest` instead of building.
+Set `VDS_IMAGE=ghcr.io/dineshpalsingh1989/wilcoxon-vds:1.1.0` in `.env` to pin a
+release. If the registry requires authentication, the source `--build` path works
+without a GitHub login. Maintainers must make a newly published container package
+Public in its GitHub package settings before anonymous users can pull it.
+
+Stop with `docker compose down`. For image-only installs, use
+`docker compose -f compose.image.yaml down`. Keep the named volume to retain
+SQLite data. Both Compose files use the project name `wilcoxon-vds`; existing
+installs should set `COMPOSE_PROJECT_NAME` to their original project name before
+upgrading so they continue using their existing volume.
+
+### What the GitHub language bar means
+
+The Python percentage describes the repository's source-code languages. It is
+not an installation requirement or a quality score. Docker bundles Python for
+Linux users; **Packages** contains built container images, **Releases** contains
+download bundles, and **Actions** shows automated code-check results.
 
 ![Dashboard with four vibration channels, RPM, measurement settings, and a velocity trend](docs/images/dashboard.png)
 
@@ -86,7 +141,15 @@ development instructions for coding assistants; it does not start runtime agents
 
 ## Run locally
 
-Tested with Python 3.14:
+For development without Docker, install Python 3.14. On Linux:
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py
+```
+
+On Windows PowerShell:
 
 ```powershell
 python -m venv .venv
@@ -251,6 +314,25 @@ Replay refuses an existing database and starts no hardware services. Captured
 JSON can replace the synthetic fixture for commissioning tests. Keep credentials
 out of captures. Tests use temporary databases and mock protocol listeners; they
 do not connect to physical sensors or PLCs. CI runs tests and builds the image.
+
+## GitHub code checks and downloads
+
+[Dashboard checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
+runs on pushes to `main`, pull requests, version tags, and manual requests:
+
+- Check dependency compatibility, Python syntax, and undefined names.
+- Run the test suite on Linux AMD64 and ARM64 runners with Python 3.14.
+- Check Linux shell syntax, build the production image, and run an isolated
+  non-root container test for startup, HTTP routes, and verified backups.
+- Validate both Compose configurations.
+- Publish AMD64/ARM64 container packages only after checks pass, outside pull requests.
+- On a `v*` tag, publish a Linux source bundle and SHA-256 checksums as a GitHub Release.
+
+GitHub creates an initial container package as private. Its owner can open
+[package settings](https://github.com/users/dineshpalsingh1989/packages/container/wilcoxon-vds/settings)
+and change visibility to Public. Public release downloads and local source builds
+are available independently of that setting. Checks exercise software behavior;
+commissioning against real VDS hardware is still required for a new installation.
 
 Modules: vds.py normalizes measurements; historian.py persists context, rules,
 backups and retention; diagnostics.py builds plots/exports; workspace_views.py

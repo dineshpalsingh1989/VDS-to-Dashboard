@@ -1,4 +1,8 @@
 FROM python:3.14-slim
+LABEL org.opencontainers.image.source="https://github.com/dineshpalsingh1989/Wilcoxon-VDS" \
+    org.opencontainers.image.title="Wilcoxon VDS Condition Monitor" \
+    org.opencontainers.image.description="MQTT vibration monitoring, SQLite history, and advisory diagnostics" \
+    org.opencontainers.image.licenses="MIT"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     VDS_HOST=0.0.0.0 VDS_PORT=8050 VDS_CONFIG_DIR=/data/config VDS_DATA_DIR=/data
 WORKDIR /app
