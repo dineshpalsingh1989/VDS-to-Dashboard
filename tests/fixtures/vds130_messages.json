@@ -1,0 +1,22 @@
+[
+  {
+    "gateway_id": "VDS-DEMO", "sensor_id": "VDS-DEMO_1", "timestamp": 1792324800000,
+    "sampling_frequency": 8, "duration": 0.5,
+    "process_data": {
+      "RPM": 1200, "SensorType": "Acceleration(g)", "SensorSensitivity": 100,
+      "Acceleration": {"value": 0.25, "unit": "g", "filter": "10Hz-10kHz", "detection": "RMS"},
+      "Velocity": {"value": 2.5, "unit": "mm/s", "filter": "10Hz-1kHz", "detection": "RMS"},
+      "Displacement": {"value": 5, "unit": "μm", "filter": "10Hz-1kHz", "detection": "RMS"},
+      "CrestFactor": {"value": 3, "unit": "ratio", "filter": "10Hz-10kHz", "detection": "ratio"},
+      "TruePeak": {"value": 0.75, "unit": "g", "filter": "10Hz-10kHz", "detection": "PEAK"},
+      "StandardDeviation": {"value": 0.25, "unit": "g", "filter": "10Hz-10kHz", "detection": "STD"}
+    },
+    "Time waveform": [0.0, 0.25, 0.0, -0.25]
+  },
+  {
+    "gateway_id": "VDS-DEMO", "sensor_id": "VDS-DEMO_1", "timestamp": 1792324800000,
+    "sampling_frequency": 8, "bandwidth": 4, "lines": 4,
+    "process_data": {"RPM": 1200, "SensorType": "Acceleration(g)", "SensorSensitivity": 100},
+    "Power spectrum": [0.0, 0.1, 0.2, 0.1, 0.0]
+  }
+]

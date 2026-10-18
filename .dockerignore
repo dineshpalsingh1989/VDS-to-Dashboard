@@ -1,0 +1,15 @@
+.git
+.venv
+.uv-cache
+__pycache__
+**/__pycache__
+device_data
+tests
+.env
+.env.*
+mqtt_config.json
+modbus_config.json
+*.db
+*.db-wal
+*.db-shm
+*.log

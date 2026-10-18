@@ -16,14 +16,10 @@ import psutil
 import socket
 from flask import send_file
 import sqlite3
-import pickle
 import asyncio
-import websockets
-from queue import Queue, Empty
 import subprocess
 import re
 from scipy.signal import find_peaks
-from dash_extensions.WebSocket import WebSocket
 import pandas as pd
 import io
 import uuid
@@ -31,6 +27,22 @@ import openpyxl
 import ssl
 import sys
 import pytz
+import logging
+import tempfile
+import hmac
+from urllib.parse import urlsplit
+from flask import request, Response
+from runtime import atomic_json_write, normalize_event, validate_payload, decode_config, load_json_config
+from monitoring import assess_health
+from vds import normalize_packet, freshness, protocol_value
+from vds import signature, spectrum_xy
+from diagnostics import export_frame, history_figure
+import historian
+import workspace_views
+from contextlib import closing
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logging.getLogger('asyncua').setLevel(logging.WARNING)
 
 # ==========================================================
 # --- CRITICAL DEPENDENCY CHECK ---
@@ -54,7 +66,7 @@ sqlite3.register_converter("timestamp", convert_datetime_iso)
 # --- MODBUS IMPORTS ---
 # =========================
 import struct
-from pymodbus.server.sync import StartTcpServer
+from pymodbus.server.sync import ModbusTcpServer
 from pymodbus.device import ModbusDeviceIdentification
 from pymodbus.datastore import ModbusSequentialDataBlock
 from pymodbus.datastore import ModbusSlaveContext, ModbusServerContext
@@ -67,7 +79,8 @@ from asyncua import Server, ua
 # =========================
 # MQTT CONFIG
 # =========================
-CONFIG_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.environ.get('VDS_CONFIG_DIR', os.path.dirname(os.path.abspath(__file__)))
+os.makedirs(CONFIG_DIR, exist_ok=True)
 MQTT_CONFIG_FILE = os.path.join(CONFIG_DIR, "mqtt_config.json")
 DEFAULT_CONFIG = {
     "PROTOCOL": "mqtt://", 
@@ -78,22 +91,7 @@ DEFAULT_CONFIG = {
     "PASSWORD": ""
 }
 def load_mqtt_config():
-    if not os.path.exists(MQTT_CONFIG_FILE):
-        try:
-            with open(MQTT_CONFIG_FILE, 'w') as f:
-                json.dump(DEFAULT_CONFIG, f, indent=4)
-            return DEFAULT_CONFIG
-        except Exception as e:
-            return DEFAULT_CONFIG
-    try:
-        with open(MQTT_CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-            for key, value in DEFAULT_CONFIG.items():
-                if key not in config:
-                    config[key] = value
-            return config
-    except Exception as e:
-        return DEFAULT_CONFIG
+    return load_json_config(MQTT_CONFIG_FILE, DEFAULT_CONFIG)
 
 mqtt_config = load_mqtt_config()
 BROKER = mqtt_config.get("BROKER", DEFAULT_CONFIG["BROKER"])
@@ -112,25 +110,10 @@ DEFAULT_MODBUS_CONFIG = {
     "registers": []
 }
 def load_modbus_config():
-    if not os.path.exists(MODBUS_CONFIG_FILE):
-        try:
-            with open(MODBUS_CONFIG_FILE, 'w') as f:
-                json.dump(DEFAULT_MODBUS_CONFIG, f, indent=4)
-            return DEFAULT_MODBUS_CONFIG
-        except Exception:
-            return DEFAULT_MODBUS_CONFIG
-    try:
-        with open(MODBUS_CONFIG_FILE, 'r') as f:
-            config = json.load(f)
-            return config
-    except Exception:
-        return DEFAULT_MODBUS_CONFIG
+    return load_json_config(MODBUS_CONFIG_FILE, DEFAULT_MODBUS_CONFIG)
+
 def save_modbus_config(config_data):
-    try:
-        with open(MODBUS_CONFIG_FILE, 'w') as f:
-            json.dump(config_data, f, indent=4)
-    except Exception:
-        pass
+    atomic_json_write(MODBUS_CONFIG_FILE, config_data)
 
 # =========================
 # OPC UA CONFIG
@@ -148,7 +131,7 @@ opcua_enabled_flag = True
 MAX_TREND_POINTS = 15
 PEAK_HEIGHT_THRESHOLD = 0.1
 script_dir = os.path.dirname(os.path.abspath(__file__))
-DATA_FOLDER = os.path.join(script_dir, "device_data")
+DATA_FOLDER = os.environ.get("VDS_DATA_DIR", os.path.join(script_dir, "device_data"))
 DB_FILE = os.path.join(DATA_FOLDER, "vibration_trends.db")
 data_lock = Lock()
 data_storage = {}
@@ -158,9 +141,6 @@ mqtt_connection_status = {"status": "disconnected", "message": "Initializing..."
 modbus_server_context = None 
 job_lock = Lock()
 active_jobs = {} 
-websocket_clients = set()
-update_queue = Queue()
-WEBSOCKET_PORT = 8051
 log_lock = Lock()
 log_messages = deque(maxlen=100) 
 TRENDED_METRICS = [
@@ -172,7 +152,7 @@ TRENDED_METRICS = [
 # DATABASE HELPER FUNCTIONS
 # =========================
 def log_to_web(message):
-    print(message)
+    logging.info(message)
     try:
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         with log_lock:
@@ -250,6 +230,7 @@ def setup_database():
         CREATE INDEX IF NOT EXISTS idx_jobs_gateway_status
         ON recording_jobs (gateway_id, status)
     """)
+    historian.setup_schema(conn)
     conn.commit()
     conn.close()
     log_to_web(f"✅ SQLite Database setup complete at {DB_FILE}")
@@ -257,7 +238,7 @@ def setup_database():
 def save_device_config_db(gateway_id, config_dict):
     conn = get_db_connection()
     try:
-        config_blob = pickle.dumps(config_dict)
+        config_blob = json.dumps(config_dict).encode('utf-8')
         conn.execute(
             "INSERT OR REPLACE INTO config (gateway_id, config_data) VALUES (?, ?)",
             (gateway_id, config_blob)
@@ -274,11 +255,20 @@ def load_device_config_db():
         for row in cursor.fetchall():
             gateway_id, config_blob = row
             if config_blob:
-                configs[gateway_id] = pickle.loads(config_blob)
+                try:
+                    configs[gateway_id] = decode_config(config_blob)
+                    conn.execute('UPDATE config SET config_data=? WHERE gateway_id=?',
+                                 (json.dumps(configs[gateway_id]).encode('utf-8'), gateway_id))
+                except Exception:
+                    # Legacy databases are local but must not execute pickle code.
+                    log_to_web(f'Legacy configuration for {gateway_id} needs re-entry; historical data is unchanged.')
+                    configs[gateway_id] = {}
             else:
                 configs[gateway_id] = {}
     except Exception: pass
-    finally: conn.close()
+    finally:
+        conn.commit()
+        conn.close()
     return configs
 
 def load_latest_metrics_from_db(gateway_id, channel, conn):
@@ -403,6 +393,10 @@ def load_data_from_db_on_startup():
                         "waveform_data": [], "spectrum_data": [],
                         "sampling_freq": 12800, "bandwidth": 5000, "lines": 6400
                     }
+                    durable = historian.get_json(conn, 'channel_state', 'state', gid, ch)
+                    data_storage[gid]['channels'][ch].update(durable)
+                    if durable and durable.get('timestamp_ms', -1) >= data_storage[gid].get('timestamp_ms', -1):
+                        data_storage[gid].update({key: durable[key] for key in ('timestamp_ms', 'received_at', 'publish_interval') if key in durable})
                     if ts_str:
                         if latest_device_ts == "N/A" or ts_str > latest_device_ts:
                             latest_device_ts = ts_str
@@ -631,7 +625,6 @@ def get_system_time_settings():
     return options, current_tz, ntp_on
 
 SERVER_IP = get_ip_address()
-log_to_web(f"✅ Determined server IP for WebSocket: {SERVER_IP}")
 
 def safe_value(value, fallback=0.0):
     if isinstance(value, bytes):
@@ -639,42 +632,6 @@ def safe_value(value, fallback=0.0):
         except: return fallback
     try: return float(value)
     except (ValueError, TypeError): return value if isinstance(value, str) else fallback
-
-# =========================
-# WEBSOCKET PUSH SERVER
-# =========================
-
-async def send_to_clients(message_json):
-    if websocket_clients:
-        clients_copy = websocket_clients.copy()
-        tasks = [client.send(message_json) for client in clients_copy]
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-async def websocket_server_logic(websocket):
-    global websocket_clients
-    try:
-        websocket_clients.add(websocket)
-        await websocket.wait_closed()
-    finally:
-        websocket_clients.remove(websocket)
-
-async def websocket_broadcast_loop():
-    server = await websockets.serve(websocket_server_logic, "0.0.0.0", WEBSOCKET_PORT)
-    log_to_web(f"✅ WebSocket push server running on ws://0.0.0.0:{WEBSOCKET_PORT}")
-    loop = asyncio.get_running_loop()
-    while True:
-        try:
-            message_dict = await loop.run_in_executor(None, update_queue.get)
-            if message_dict:
-                message_json = json.dumps(message_dict)
-                await send_to_clients(message_json)
-        except Exception:
-            await asyncio.sleep(1.0)
-
-def start_websocket_server_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(websocket_broadcast_loop())
 
 # =========================
 # JOB MANAGEMENT
@@ -695,12 +652,12 @@ def _check_active_jobs():
 
         conn = get_db_connection()
         for job_id, gateway_id in jobs_to_complete:
-            conn.execute("UPDATE recording_jobs SET status='completed' WHERE job_id=?", (job_id,))
             with job_lock:
                 if gateway_id in active_jobs and active_jobs[gateway_id]['job_id'] == job_id:
+                    conn.execute("UPDATE recording_jobs SET status='completed' WHERE job_id=?", (job_id,))
+                    conn.commit()
                     del active_jobs[gateway_id]
             log_to_web(f"✅ Recording job {job_id} for {gateway_id} completed.")
-            update_queue.put({"type": "job_status_update", "gateway_id": gateway_id})
         conn.commit()
     except Exception as e:
         log_to_web(f"❌ Error in _check_active_jobs: {e}")
@@ -725,12 +682,10 @@ def on_connect(client, userdata, flags, rc):
         client.subscribe(TOPIC)
         with mqtt_status_lock:
             mqtt_connection_status = {"status": "connected", "message": f"Connected to {BROKER}:{PORT}"}
-        update_queue.put({"type": "mqtt_status_update"})
     else:
         log_to_web(f"❌ MQTT connection failed with code: {rc}")
         with mqtt_status_lock:
             mqtt_connection_status = {"status": "failed", "message": f"Connection failed. Code: {rc}"}
-        update_queue.put({"type": "mqtt_status_update"})
 
 def on_disconnect(client, userdata, rc):
     global mqtt_connection_status, mqtt_status_lock
@@ -738,148 +693,69 @@ def on_disconnect(client, userdata, rc):
         log_to_web(f"⚠️ MQTT unexpectedly disconnected with code: {rc}. Reconnecting...")
     with mqtt_status_lock:
         mqtt_connection_status = {"status": "disconnected", "message": "Disconnected. Reconnecting..."}
-    update_queue.put({"type": "mqtt_status_update"})
 
 def on_message(client, userdata, msg):
-    # FIX 3: Robust Connection Handling (Reconnection on Error)
-    # Don't rely on 'userdata' as it might be stale. Use a new local connection if needed.
-    # For performance, we try to maintain a connection, but handle failures gracefully.
-    
-    # We will use a local logic: Open -> Write -> Close (safest for SQLite concurrency + WAL)
-    # This completely eliminates "stale connection" errors.
-    
     conn = None
     try:
-        data_peek = json.loads(msg.payload.decode("utf-8"))
-        gateway_id = data_peek.get("gateway_id")
-        
-        # Quick filter
-        if not gateway_id: return
-        
-        sensor_id = data_peek.get("sensor_id", "unknown_0")
-        channel = sensor_id.split('_')[-1]
-        if channel not in ['1', '2', '3', '4']: return
-
-        # Establish Fresh Connection for Write (Safest Pattern for Multithreaded SQLite)
-        conn = get_db_connection()
-        
-        timestamp_ms = data_peek.get("timestamp", 0)
-        timestamp_dt = datetime.fromtimestamp(timestamp_ms / 1000)
-        timestamp_str = timestamp_dt.strftime('%Y-%m-%d %H:%M:%S') if timestamp_ms else "N/A"
-        
-        update_summary = None
-        is_new_device = False
-        
+        if len(msg.payload) > 8 * 1024 * 1024:
+            raise ValueError('MQTT payload exceeds 8 MiB')
+        packet = normalize_packet(json.loads(msg.payload.decode('utf-8')))
+        gid, ch = packet['gateway_id'], packet['channel']
         with job_lock:
-            is_recording = gateway_id in active_jobs
-
-        with data_lock:
-            if gateway_id not in data_storage:
-                log_to_web(f"ℹ️ New device detected: {gateway_id}")
-                data_storage[gateway_id] = {
-                    "channels": {}, "rpm": 0.0, "last_seen": "N/A",
-                    "rpm_trend": deque(maxlen=MAX_TREND_POINTS),
-                    "rpm_trend_times": deque(maxlen=MAX_TREND_POINTS)
-                }
-                is_new_device = True
-            
-            if channel not in data_storage[gateway_id]["channels"]:
-                data_storage[gateway_id]["channels"][channel] = {
-                    "trends": {m: deque(maxlen=MAX_TREND_POINTS) for m in TRENDED_METRICS},
-                    "trend_times": deque(maxlen=MAX_TREND_POINTS), "metrics": {}, "timestamp": "N/A",
-                    "waveform_data": [], "spectrum_data": [], "sampling_freq": 12800,
-                    "bandwidth": 5000, "lines": 6400
-                }
-            
-            ch_data_ref = data_storage[gateway_id]["channels"][channel]
-            
-            # ... (Data Processing Logic Same as Before) ...
-            if "Time waveform" in data_peek:
-                pd = data_peek.get("process_data", {})
-                waveform_raw = np.nan_to_num(data_peek.get("Time waveform", []))
-                
-                metrics = {
-                    "Acceleration": np.nan_to_num(pd.get("Acceleration", {}).get("value", 0)),
-                    "Velocity": np.nan_to_num(pd.get("Velocity", {}).get("value", 0)),
-                    "Displacement": np.nan_to_num(pd.get("Displacement", {}).get("value", 0)),
-                    "Crest Factor": np.nan_to_num(pd.get("CrestFactor", {}).get("value", 0)),
-                    "True Peak": np.nan_to_num(pd.get("TruePeak", {}).get("value", 0)),
-                    "Std Deviation": np.nan_to_num(np.std(waveform_raw)) if waveform_raw.size else 0
-                }
-                rpm_val = pd.get("RPM", 0)
-
-                # Update InMemory Storage
-                ch_data_ref["metrics"] = metrics
-                ch_data_ref["timestamp"] = timestamp_str
-                ch_data_ref["sensitivity"] = pd.get("SensorSensitivity", '---')
-                
-                for key, val in metrics.items():
-                    if key in ch_data_ref["trends"]: ch_data_ref["trends"][key].append(val)
-                ch_data_ref["trend_times"].append(timestamp_str)
-                
-                data_storage[gateway_id]["rpm"] = rpm_val
-                data_storage[gateway_id]["last_seen"] = timestamp_str
-                data_storage[gateway_id]["rpm_trend"].append(rpm_val)
-                data_storage[gateway_id]["rpm_trend_times"].append(timestamp_str)
-
-                fs = 0
-                if waveform_raw.size > 0:
-                    fs = data_peek.get("sampling_frequency", 12800)
-                    ch_data_ref["waveform_data"] = waveform_raw.tolist()
-                    ch_data_ref["sampling_freq"] = fs
-                
-                # DB Operations
-                db_trends_to_write_latest = []
-                db_trends_to_write_history = []
-                
-                for metric, value in metrics.items():
-                    db_trends_to_write_latest.append((gateway_id, channel, metric, value, rpm_val, timestamp_dt))
-                    if is_recording:
-                        db_trends_to_write_history.append((timestamp_dt, gateway_id, channel, metric, value, rpm_val))
-                
-                conn.executemany("INSERT OR REPLACE INTO trends_latest (gateway_id, channel, metric_name, value, rpm, timestamp) VALUES (?, ?, ?, ?, ?, ?)", db_trends_to_write_latest)
-                
-                if db_trends_to_write_history:
-                    conn.executemany("INSERT OR IGNORE INTO trends (timestamp, gateway_id, channel, metric_name, value, rpm) VALUES (?, ?, ?, ?, ?, ?)", db_trends_to_write_history)
-                
-                if waveform_raw.size > 0 and is_recording:
-                    conn.execute("INSERT OR IGNORE INTO raw_waveforms (gateway_id, channel, timestamp, waveform_data, sampling_freq) VALUES (?, ?, ?, ?, ?)", 
-                                 (gateway_id, channel, timestamp_dt, waveform_raw.tobytes(), fs))
-                
-                update_summary = {"type": "data_update", "gateway_id": gateway_id, "channel": channel}
-
-            elif "Power spectrum" in data_peek:
-                spectrum_raw = np.nan_to_num(data_peek.get("Power spectrum", []))
-                if timestamp_str != "N/A": data_storage[gateway_id]["last_seen"] = timestamp_str
-                
-                ch_data_ref["spectrum_data"] = spectrum_raw.tolist()
-                ch_data_ref["bandwidth"] = data_peek.get("bandwidth", 5000)
-                ch_data_ref["lines"] = data_peek.get("lines", 6400)
-                
-                if is_recording and spectrum_raw.size > 0:
-                    conn.execute("INSERT OR IGNORE INTO raw_spectrum (gateway_id, channel, timestamp, spectrum_data, bandwidth, lines) VALUES (?, ?, ?, ?, ?, ?)",
-                                 (gateway_id, channel, timestamp_dt, spectrum_raw.tobytes(), ch_data_ref["bandwidth"], ch_data_ref["lines"]))
-                
-                update_summary = {"type": "data_update", "gateway_id": gateway_id, "channel": channel}
-
-        if is_new_device:
-            save_device_config_db(gateway_id, {})
-        
+            recording = gid in active_jobs and active_jobs[gid]['end_time'] > datetime.now()
+        conn = get_db_connection()
+        state = historian.store_packet(conn, packet, recording)
         conn.commit()
-        if update_summary: update_queue.put(update_summary)
-
-    except Exception as e:
-        log_to_web(f"❌ Error in MQTT Message Handler: {e}")
-        if conn: conn.rollback()
+        # Publish to readers only after the durable transaction succeeds.
+        with data_lock:
+            device = data_storage.setdefault(gid, {'channels': {}, 'rpm': None, 'last_seen': 'N/A',
+                'rpm_trend': deque(maxlen=MAX_TREND_POINTS), 'rpm_trend_times': deque(maxlen=MAX_TREND_POINTS)})
+            channel = device['channels'].setdefault(ch, {
+                'trends': {metric: deque(maxlen=MAX_TREND_POINTS) for metric in TRENDED_METRICS},
+                'trend_times': deque(maxlen=MAX_TREND_POINTS), 'trend_x': {}, 'waveform_data': [], 'spectrum_data': []})
+            accepted = state.pop('accepted_metrics', {})
+            previous_metadata = channel.get('metadata', {})
+            for metric in accepted:
+                if signature(previous_metadata.get(metric, {})) != signature(state.get('metadata', {}).get(metric, {})):
+                    channel['trends'].setdefault(metric, deque(maxlen=MAX_TREND_POINTS)).clear()
+                    channel.setdefault('trend_x', {}).setdefault(metric, deque(maxlen=MAX_TREND_POINTS)).clear()
+            channel.update(state)
+            channel['timestamp'] = datetime.fromtimestamp(state['timestamp_ms'] / 1000).strftime('%Y-%m-%d %H:%M:%S')
+            for metric, value in accepted.items():
+                channel['trends'].setdefault(metric, deque(maxlen=MAX_TREND_POINTS)).append(value)
+                channel.setdefault('trend_x', {}).setdefault(metric, deque(maxlen=MAX_TREND_POINTS)).append(
+                    datetime.fromtimestamp(packet['timestamp_ms'] / 1000).strftime('%Y-%m-%d %H:%M:%S'))
+            if accepted:
+                channel['trend_times'].append(channel['timestamp'])
+            for kind in ('waveform', 'spectrum'):
+                if packet[kind + '_data'] is not None and packet['timestamp_ms'] >= channel.get(kind + '_timestamp_ms', -1):
+                    channel[kind + '_data'] = packet[kind + '_data']
+                    channel[kind + '_timestamp_ms'] = packet['timestamp_ms']
+                    channel[kind + '_context'] = {key: packet.get(key) for key in (
+                        'timestamp_ms', 'sampling_freq', 'bandwidth', 'lines', 'window', 'sensor_type', 'sensitivity', 'rpm', 'quality_issues')}
+            if state['timestamp_ms'] >= device.get('timestamp_ms', -1):
+                device.update(timestamp_ms=state['timestamp_ms'], received_at=state['received_at'],
+                              publish_interval=state['publish_interval'], last_seen=channel['timestamp'])
+                if state.get('rpm') is not None:
+                    device['rpm'] = state['rpm']
+                    if accepted:
+                        device['rpm_trend'].append(state['rpm'])
+                        device['rpm_trend_times'].append(channel['timestamp'])
+    except Exception:
+        if conn:
+            conn.rollback()
+        logging.exception('MQTT message rejected or could not be persisted')
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
+
 
 def mqtt_thread_func():
     while True:
         try:
             # Note: We are NO LONGER passing a persistent DB connection.
             # on_message creates its own short-lived connection for robustness.
-            client = mqtt.Client()
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
             if USERNAME: client.username_pw_set(USERNAME, PASSWORD)
             client.on_connect = on_connect
             client.on_message = on_message
@@ -927,15 +803,8 @@ def modbus_updater_thread_func():
                 field_name = reg_info.get("field")
                 value_float = 0.0
                 
-                try:
-                    if sensor_id in live_data:
-                        if field_name == "RPM":
-                            rpm_val = live_data[sensor_id].get("rpm")
-                            if rpm_val is not None: value_float = float(rpm_val)
-                        elif channel_id in live_data[sensor_id].get("channels", {}):
-                            metric_val = live_data[sensor_id]["channels"][channel_id].get("metrics", {}).get(field_name)
-                            if metric_val is not None: value_float = float(metric_val)
-                except Exception: pass 
+                value_float = protocol_value(live_data.get(sensor_id, {}), channel_id, field_name,
+                    mqtt_connection_status['status'] == 'connected')
 
                 # FIX 1: Modbus Expansion Crash Protection
                 try:
@@ -965,10 +834,7 @@ def modbus_server_thread_func():
         return
 
     try:
-        registers_map = config.get("registers", [])
-        num_registers = len(registers_map) * 2
-        
-        if num_registers == 0: num_registers = 2
+        num_registers = 4096
         log_to_web(f"ℹ️ Initializing Modbus datastore with {num_registers} registers.")
 
         block = ModbusSequentialDataBlock(0, [0] * num_registers)
@@ -981,12 +847,23 @@ def modbus_server_thread_func():
         identity.ProductName = 'Vibration Gateway'
         identity.ModelName = 'GW-001'
 
-        log_to_web("✅ Modbus TCP server starting on 0.0.0.0:502...")
-        StartTcpServer(
+        log_to_web("✅ Modbus TCP listener starting on the configured interface...")
+        server = ModbusTcpServer(
             context=modbus_server_context,
             identity=identity,
-            address=("0.0.0.0", 502) 
+            allow_reuse_address=True,
+            address=(os.environ.get('VDS_PROTOCOL_HOST', '127.0.0.1'), int(os.environ.get('VDS_MODBUS_PORT', '502')))
         )
+        def watch_configuration():
+            while load_modbus_config().get('enabled', False):
+                time.sleep(1)
+            server.shutdown()
+        Thread(target=watch_configuration, daemon=True).start()
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
+            modbus_server_context = None
         
     except Exception as e:
         log_to_web(f"❌ Modbus server failed to start: {e}. Check if port 502 is in use.")
@@ -1000,18 +877,18 @@ async def run_opcua_server():
     
     opcua_server = Server()
     await opcua_server.init()
-    opcua_server.set_endpoint(f"opc.tcp://0.0.0.0:{OPCUA_PORT}")
+    opcua_server.set_endpoint(f"opc.tcp://{os.environ.get('VDS_PROTOCOL_HOST', '127.0.0.1')}:{OPCUA_PORT}")
     opcua_server.set_server_name("Wilcoxon Vibration Server")
     
     # Register Namespace
     idx = await opcua_server.register_namespace("http://wilcoxon.com/vibmon")
     
     # Start the server
-    log_to_web(f"✅ OPC UA Server starting on opc.tcp://0.0.0.0:{OPCUA_PORT}")
-    opcua_running = True
+    log_to_web(f"✅ OPC UA listener starting on configured interface, port {OPCUA_PORT}")
     
     async with opcua_server:
-        while True:
+        opcua_running = True
+        while opcua_enabled_flag:
             try:
                 # 1. Get Live Data
                 with data_lock:
@@ -1030,10 +907,9 @@ async def run_opcua_server():
                     g_map = opcua_node_map[gateway_id]
                     
                     # B. RPM
-                    rpm_val = device_data.get("rpm", 0.0)
+                    rpm_val = device_data.get("rpm") or 0.0
                     if g_map["rpm_node"] is None:
-                        rpm_node = await g_map["node"].add_variable(idx, "RPM", rpm_val)
-                        await rpm_node.set_writable() # Optional
+                        rpm_node = await g_map["node"].add_variable(ua.NodeId(f'Device_{gateway_id}.RPM', idx), "RPM", float(rpm_val))
                         g_map["rpm_node"] = rpm_node
                     else:
                         await g_map["rpm_node"].write_value(float(rpm_val))
@@ -1051,28 +927,56 @@ async def run_opcua_server():
                             g_map["channels"][ch] = {"node": ch_node, "metrics": {}}
                         
                         c_map = g_map["channels"][ch]
+                        c_map.setdefault('quality', {})
+                        for field, label in (('Data Age', 'DataAgeSeconds'), ('Data Valid', 'DataValid'), ('Communication Status', 'CommunicationStatus')):
+                            value = protocol_value(device_data, ch, field, mqtt_connection_status['status'] == 'connected')
+                            if label not in c_map['quality']:
+                                c_map['quality'][label] = await c_map['node'].add_variable(ua.NodeId(f'Device_{gateway_id}.Channel_{ch}.{label}', idx), label, float(value))
+                            else:
+                                await c_map['quality'][label].write_value(float(value))
                         
                         # D. Metrics
                         for metric_name, val in metrics.items():
                             clean_name = metric_name.replace(" ", "_")
                             if clean_name not in c_map["metrics"]:
-                                m_node = await c_map["node"].add_variable(idx, clean_name, float(val))
+                                m_node = await c_map["node"].add_variable(ua.NodeId(f'Device_{gateway_id}.Channel_{ch}.{clean_name}', idx), clean_name, float(val))
                                 c_map["metrics"][clean_name] = m_node
                             else:
                                 await c_map["metrics"][clean_name].write_value(float(val))
+                            unit_name = clean_name + '_Settings'
+                            settings = json.dumps(ch_data.get('metadata', {}).get(metric_name, {}), sort_keys=True)
+                            if unit_name not in c_map['quality']:
+                                c_map['quality'][unit_name] = await c_map['node'].add_variable(ua.NodeId(f'Device_{gateway_id}.Channel_{ch}.{unit_name}', idx), unit_name, settings)
+                            else:
+                                await c_map['quality'][unit_name].write_value(settings)
 
             except Exception as e:
                 log_to_web(f"❌ OPC UA Loop Error: {e}")
             
             await asyncio.sleep(1) # Update every 1 second
+    opcua_running = False
+    opcua_node_map.clear()
 
 def opcua_thread_entry():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(run_opcua_server())
-    except Exception as e:
-        log_to_web(f"❌ OPC UA Server Thread Crashed: {e}")
+    while True:
+        try:
+            if opcua_enabled_flag:
+                loop.run_until_complete(run_opcua_server())
+        except Exception:
+            logging.exception('OPC UA service failed')
+            global opcua_running
+            opcua_running = False
+            opcua_node_map.clear()
+        time.sleep(1)
+
+
+def modbus_supervisor():
+    while True:
+        if load_modbus_config().get('enabled', False):
+            modbus_server_thread_func()
+        time.sleep(1)
 
 # =========================
 # DASH APP CONFIG & LAYOUT
@@ -1083,6 +987,53 @@ app = Dash(__name__,
             assets_folder='assets') 
 
 app.title = "Wilcoxon Vibration Monitor"
+
+@app.server.get('/healthz')
+def healthcheck():
+    return {'status': 'ok'}
+
+@app.server.before_request
+def protect_dashboard():
+    if request.path == '/healthz' and request.method == 'GET':
+        return None
+    password = os.environ.get('VDS_ADMIN_PASSWORD', '')
+    if not password:
+        if request.remote_addr not in ('127.0.0.1', '::1'):
+            return Response('Set VDS_ADMIN_PASSWORD before remote access.', status=403)
+        return None
+    auth = request.authorization
+    admin = auth and hmac.compare_digest(auth.username or '', os.environ.get('VDS_ADMIN_USER', 'admin')) and hmac.compare_digest(auth.password or '', password)
+    viewer_password = os.environ.get('VDS_VIEWER_PASSWORD', '')
+    viewer = auth and viewer_password and hmac.compare_digest(auth.username or '', os.environ.get('VDS_VIEWER_USER', 'viewer')) and hmac.compare_digest(auth.password or '', viewer_password)
+    if not admin and not viewer:
+        return Response('Authentication required', 401, {'WWW-Authenticate': 'Basic realm="VDS Dashboard"'})
+    if request.method == 'POST':
+        origin = request.headers.get('Origin')
+        if origin and urlsplit(origin).netloc != request.host:
+            return Response('Cross-origin action rejected', 403)
+        output = (request.get_json(silent=True) or {}).get('output', '')
+        callback = app.callback_map.get(output, {}).get('callback')
+        name = getattr(callback, '__name__', '')
+        readonly = {'refresh_live_data', 'display_page', 'update_debug_log', 'update_health_agents',
+                    'update_ethernet_settings', 'update_data_storage_page', 'update_data_storage_panel',
+                    'update_time_remaining', 'update_dynamic_dashboard', 'update_device_info',
+                    'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
+                    'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
+                    'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
+                    'disable_ch', 'toggle_time_inputs'} | workspace_views.READ_CALLBACKS
+        status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
+        if viewer and not admin and name not in readonly and not status_poll:
+            return Response('Administrator access required for this action', 403)
+        logging.info('Dashboard action user=%s callback=%s remote=%s', auth.username, name, request.remote_addr)
+
+
+@app.server.after_request
+def security_headers(response):
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Referrer-Policy'] = 'same-origin'
+    response.headers['Cache-Control'] = 'no-store'
+    return response
 led_base_style = {"width": "20px","height": "20px","borderRadius": "50%","display": "inline-block","marginRight": "10px","verticalAlign": "middle"}
 led_green_style = {"backgroundColor": "#22c55e", **led_base_style}
 led_red_style = {"backgroundColor": "#ef4444", **led_base_style}
@@ -1092,7 +1043,20 @@ def download_data_file(filename):
     if filename != os.path.basename(DB_FILE): return "File not found.", 404
     file_path = DB_FILE
     if not os.path.exists(file_path): return "File not found.", 404
-    return send_file(file_path, mimetype='application/x-sqlite3', as_attachment=True, download_name=filename)
+    snapshot = io.BytesIO()
+    with tempfile.TemporaryDirectory() as directory:
+        target = os.path.join(directory, 'snapshot.db')
+        source = get_db_connection()
+        destination = sqlite3.connect(target)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
+        with open(target, 'rb') as stream:
+            snapshot.write(stream.read())
+    snapshot.seek(0)
+    return send_file(snapshot, mimetype='application/x-sqlite3', as_attachment=True, download_name=filename)
 
 def create_channel_box(channel_id, gateway_id, data, device_config):
     ch = str(channel_id)
@@ -1105,53 +1069,36 @@ def create_channel_box(channel_id, gateway_id, data, device_config):
     alarm_config = device_config.get("alarms", {}).get(ch, {})
 
     is_checked = trend_config.get(ch, False)
-    current_label = label_config.get(ch, "")
+    current_label = label_config.get(ch, "") or " / ".join((data or {}).get("asset", {}).get(key, "") for key in ("machine", "location", "direction") if (data or {}).get("asset", {}).get(key))
     is_alarm_enabled = alarm_config.get("enabled", False)
 
     sens, accel, vel, disp, crest, peak, stddev, ts = "---", "---", "---", "---", "---", "---", "---", "N/A"
     vel_val = 0.0 
 
-    is_stale = True
-    if data and data.get("timestamp") and data["timestamp"] != "N/A":
-        ts = data["timestamp"] 
-        try:
-            last_ts = datetime.strptime(ts, '%Y-%m-%d %H:%M:%S')
-            if (datetime.now() - last_ts) < timedelta(minutes=5):
-                is_stale = False
-        except ValueError: pass 
+    is_stale = freshness(data or {})['status'] != 'fresh'
+    ts = (data or {}).get('timestamp', 'N/A')
 
     if is_stale:
         style, led_style, led_class = inactive_style, led_red_style, ""
     else:
         style, led_style, led_class = active_style, {**led_green_style}, "led-green-pulsing"
 
-    if data and data.get("metrics"):
-        metrics = data.get("metrics", {})
-        raw_sens = data.get('sensitivity', '---')
-        sens = f"{safe_value(raw_sens, fallback='---')} mV/g"
-        
-        accel_val = safe_value(metrics.get('Acceleration', 0.0))
-        vel_val = safe_value(metrics.get('Velocity', 0.0)) 
-        disp_val = safe_value(metrics.get('Displacement', 0.0))
-        crest_val = safe_value(metrics.get('Crest Factor', 0.0))
-        peak_val = safe_value(metrics.get('True Peak', 0.0))
-        stddev_val = safe_value(metrics.get('Std Deviation', 0.0))
+    if data and data.get('metrics'):
+        metrics, metadata = data['metrics'], data.get('metadata', {})
+        sens = f"{data.get('sensitivity') or 'Unknown'} mV / {data.get('sensor_type') or 'sensor unit'}"
+        def formatted(metric):
+            if metric not in metrics:
+                return 'Not received'
+            settings = metadata.get(metric, {})
+            suffix = ' | '.join(str(settings.get(key) or 'unknown') for key in ('unit', 'detection', 'filter'))
+            return f"{metrics[metric]:.4f} {suffix}"
+        accel, vel, disp, crest, peak, stddev = (formatted(metric) for metric in TRENDED_METRICS)
 
-        accel = f"{accel_val:.4f} g"
-        vel = f"{vel_val:.4f} mm/s"
-        disp = f"{disp_val:.4f} µm"
-        crest = f"{crest_val:.4f}"
-        peak = f"{peak_val:.4f} g"
-        stddev = f"{stddev_val:.4f}"
-
-    if is_alarm_enabled:
-        vel_alert = alarm_config.get("vel_alert", 0.0)
-        vel_warn = alarm_config.get("vel_warn", 0.0)
-
-        if vel_alert > 0 and isinstance(vel_val, (int, float)) and vel_val >= vel_alert:
-            style = {**style, "borderTop": "4px solid #dc3545", "animation": "pulse-red 1.5s infinite"}
-        elif vel_warn > 0 and isinstance(vel_val, (int, float)) and vel_val >= vel_warn:
-            style = {**style, "borderTop": "4px solid #ffc107", "animation": "pulse-yellow 1.5s infinite"}
+    severity = (data or {}).get('alarm', {}).get('severity', 'normal')
+    if severity == 'alert':
+        style = {**style, 'borderTop': '4px solid #dc3545'}
+    elif severity == 'warning':
+        style = {**style, 'borderTop': '4px solid #ffc107'}
 
     wf_btn_id = {"type": "ch-wf-btn", "gateway": gateway_id, "channel": ch}
     spec_btn_id = {"type": "ch-spec-btn", "gateway": gateway_id, "channel": ch}
@@ -1186,7 +1133,7 @@ def create_channel_box(channel_id, gateway_id, data, device_config):
     ], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6", "padding": "0.75rem 1rem"})
 
     card_body_content = [
-        html.P([html.Strong("Coupling: "), html.Span("IEPE")]),
+        html.P([html.Strong("Sensor type: "), html.Span((data or {}).get("sensor_type") or "Not reported")]),
         html.P([html.Strong("Sensitivity: "), html.Span(sens)]),
         html.P([html.Strong("Acceleration: "), html.Span(accel)]),
         html.P([html.Strong("Velocity: "), html.Span(vel)]),
@@ -1194,6 +1141,7 @@ def create_channel_box(channel_id, gateway_id, data, device_config):
         html.P([html.Strong("Crest Factor: "), html.Span(crest)]),
         html.P([html.Strong("True Peak: "), html.Span(peak)]),
         html.P([html.Strong("Std Deviation: "), html.Span(stddev)]),
+        html.P([html.Strong("Quality: "), html.Span(freshness(data or {})["status"])]),
         html.P([html.Strong("Timestamp: "), html.Span(ts)], className="mt-3 small text-muted"),
         dbc.ButtonGroup([
             html.Button("Waveform", id=wf_btn_id, className="btn btn-outline-primary btn-sm"),
@@ -1225,7 +1173,7 @@ header = dbc.Navbar(
     dbc.Container(
         [
             dbc.Button(html.I(className="fas fa-bars"), id="sidebar-toggle-btn", color="light", outline=True, n_clicks=0, className="me-2"),
-            html.A("Real-Time Vibration Monitor", href="#", style={"textDecoration": "none", "color": "white", "fontSize": "1.25rem"})
+            html.A("VDS Condition Monitor", href="#", style={"textDecoration": "none", "color": "white", "fontSize": "1.25rem"})
         ], fluid=True
     ), color="dark", dark=True, fixed="top" 
 )
@@ -1234,6 +1182,11 @@ sidebar = html.Div([
     html.H4("Menu", className="text-white p-3"),
     dbc.Nav([
         dbc.NavLink([html.I(className="fas fa-chart-line me-2"), "Dashboard"], href="/", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-heartbeat me-2"), "Health Agents"], href="/health", active="exact", className="text-white"),
+        dbc.NavLink('Asset registry', href='/assets', active='exact', className='text-white'),
+        dbc.NavLink('Alarm management', href='/alarms', active='exact', className='text-white'),
+        dbc.NavLink('Vibration diagnostics', href='/diagnostics', active='exact', className='text-white'),
+        dbc.NavLink('Reports and backups', href='/reports', active='exact', className='text-white'),
         dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"), 
@@ -1304,14 +1257,9 @@ def generate_modbus_table(registers_list, live_data_storage):
             sensor_id = reg.get("sensor", "N/A"); channel_id = reg.get("channel", "N/A"); field_name = reg.get("field", "N/A")
             current_value_str = "N/A"
             try:
-                if sensor_id in live_data_storage:
-                    if field_name == "RPM":
-                        rpm_val = live_data_storage[sensor_id].get("rpm")
-                        if rpm_val is not None: current_value_str = f"{rpm_val:.2f}"
-                    elif channel_id in live_data_storage[sensor_id].get("channels", {}):
-                        metric_val = live_data_storage[sensor_id]["channels"][channel_id].get("metrics", {}).get(field_name)
-                        if metric_val is not None: current_value_str = f"{metric_val:.4f}"
-            except Exception: current_value_str = "Error"
+                current_value_str = f"{protocol_value(live_data_storage.get(sensor_id, {}), channel_id, field_name, mqtt_connection_status['status'] == 'connected'):.4f}"
+            except (ValueError, TypeError):
+                current_value_str = 'Invalid'
             body_rows.append(html.Tr([html.Td(i), html.Td(sensor_id), html.Td(channel_id), html.Td(reg.get("data_type", "N/A")), html.Td(field_name), html.Td(current_value_str, style={'fontWeight': 'bold', 'color': 'black'}), html.Td(action_buttons, style={"textAlign": "center"})]))
     return dbc.Table([header, html.Tbody(body_rows)], bordered=True, hover=True, striped=True)
 
@@ -1332,7 +1280,7 @@ def create_modbus_layout():
         gateway_options = [{'label': row[0], 'value': row[0]} for row in cursor.fetchall()]
         conn.close()
     except Exception: pass
-    value_options = [{'label': m, 'value': m} for m in TRENDED_METRICS] + [{'label': 'RPM', 'value': 'RPM'}]
+    value_options = [{'label': m, 'value': m} for m in TRENDED_METRICS] + [{'label': field, 'value': field} for field in ('RPM', 'Data Age', 'Data Valid', 'Communication Status')]
     
     layout = html.Div([
         dbc.Row(dbc.Col(html.H4("Modbus TCP Server"), className="mb-4 mt-4")),
@@ -1361,7 +1309,7 @@ def create_modbus_layout():
         
         dbc.Card(dbc.CardBody([
             dbc.Alert(id="modbus-save-status", is_open=False, duration=4000),
-            dbc.Alert("Changes saved here may require an application restart to take effect.", color="info", className="mb-3"),
+            dbc.Alert("Enable and disable changes apply automatically. Register mappings update within two seconds.", color="info", className="mb-3"),
             dbc.Switch(id="modbus-enable-switch", label="Enable Modbus TCP Server", value=is_enabled, className="mb-3 fs-5"),
             html.P("Connect to the Gateway's Modbus server on port 502. Slave ID is always 1."),
             html.Hr(),
@@ -1420,7 +1368,7 @@ def create_opcua_layout():
                     dbc.Label("Endpoint URL (TCP)", className="text-muted fw-bold small text-uppercase"),
                     dbc.InputGroup([
                         dbc.InputGroupText(html.I(className="fas fa-network-wired")),
-                        dbc.Input(id="opc-endpoint-url", value=f"opc.tcp://{SERVER_IP}:{OPCUA_PORT}", readonly=True, className="font-monospace"),
+                        dbc.Input(id="opc-endpoint-url", value=f"opc.tcp://{os.environ.get('VDS_PROTOCOL_HOST', '127.0.0.1')}:{OPCUA_PORT}", readonly=True, className="font-monospace"),
                         dcc.Clipboard(target_id="opc-endpoint-url", title="Copy", style={"fontSize": 20, "display": "inline-block", "marginLeft": "10px", "marginTop": "5px", "color": "#6c757d"})
                     ], className="mb-2"),
                     html.Div([html.I(className="fas fa-info-circle me-1"), " Port 4840 is open. Anonymous login allowed."], className="small text-muted")
@@ -1433,7 +1381,7 @@ def create_opcua_layout():
                 dbc.CardBody([
                     dbc.Row([
                         dbc.Col([
-                            html.H2(id="opc-client-count", children="0", className="text-primary fw-bold"),
+                            html.H2(id="opc-client-count", children="Unavailable", className="text-primary fw-bold"),
                             html.Small("Active Clients", className="text-muted text-uppercase")
                         ], width=6, className="text-center border-end"),
                         dbc.Col([
@@ -1514,7 +1462,7 @@ device_info_layout = html.Div([
 
 content = html.Div(id="page-content", style={"marginLeft": "18rem", "padding": "2rem 1rem", "paddingTop": "5rem", "transition": "all 0.3s"})
 graph_modal = dbc.Modal([dbc.ModalHeader(id="modal-header"),dbc.ModalBody([dcc.Graph(id="modal-graph", style={"height": "450px"}),html.Div(id="modal-peak-table-container", className="mt-3")]),dbc.ModalFooter(html.Button("Close", id="modal-close-btn", className="btn btn-primary ms-auto"))], id="graph-modal", is_open=False, size="xl")
-alarm_modal = dbc.Modal([dbc.ModalHeader(id="alarm-modal-header"),dbc.ModalBody(id="alarm-modal-body"),dbc.ModalFooter([dbc.Button("Save", id="alarm-modal-save-btn", color="primary"),dbc.Button("Cancel", id="alarm-modal-close-btn", color="secondary")])], id="alarm-modal", is_open=False)
+alarm_modal = dbc.Modal([dbc.ModalHeader(id="alarm-modal-header"),dbc.ModalBody(id="alarm-modal-body"),dbc.ModalFooter([dbc.Button("Cancel", id="alarm-modal-close-btn", color="secondary")])], id="alarm-modal", is_open=False)
 initial_device_config = load_data_from_db_on_startup()
 
 app.layout = html.Div([
@@ -1529,7 +1477,7 @@ app.layout = html.Div([
     dcc.Store(id='store-alarm-config-data'), dcc.Download(id="download-excel-component"),
     dcc.ConfirmDialog(id='confirm-restart-dialog', message='Are you sure you want to restart the application? This will apply all saved changes.'),
     header, sidebar, content, graph_modal, alarm_modal, 
-    WebSocket(url=f"ws://{SERVER_IP}:{WEBSOCKET_PORT}", id="ws"),
+    dcc.Interval(id='live-refresh', interval=2000, n_intervals=0),
     dcc.Store(id='live-update-trigger'),
     dcc.Interval(id="system_info_interval", interval=5000, n_intervals=0),
     dcc.Interval(id="file_update_interval", interval=15000, n_intervals=0),
@@ -1540,13 +1488,18 @@ app.layout = html.Div([
 # CALLBACKS
 # =========================
 
-@app.callback(Output("live-update-trigger", "data"), Input("ws", "message"))
-def on_websocket_message(message):
-    if not message: return no_update
-    return message
+@app.callback(Output("live-update-trigger", "data"), Input("live-refresh", "n_intervals"))
+def refresh_live_data(message):
+    return {'type': 'data_update', 'sequence': message}
 
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
+    pages = {'/assets': workspace_views.assets_page, '/alarms': workspace_views.alarms_page,
+             '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page}
+    if pathname in pages:
+        return pages[pathname]()
+    if pathname == '/health':
+        return html.Div([html.H3('Health Agents'), html.P('Live advisory checks for sensor freshness, connectivity, and storage.', className='text-muted'), html.Div(id='health-findings')])
     if pathname == "/device": return device_info_layout
     elif pathname == "/data-storage": return data_storage_layout
     elif pathname == "/history": return history_layout
@@ -1561,6 +1514,18 @@ def display_page(pathname):
 @app.callback(Output("debug-log-output", "children"), Input("system_info_interval", "n_intervals"))
 def update_debug_log(n):
     with log_lock: return "\n".join(log_messages)
+
+
+@app.callback(Output('health-findings', 'children'), Input('system_info_interval', 'n_intervals'))
+def update_health_agents(n):
+    with data_lock:
+        devices = copy.deepcopy(data_storage)
+    with mqtt_status_lock:
+        status = mqtt_connection_status['status']
+    free = 100 - psutil.disk_usage(DATA_FOLDER).percent
+    with closing(get_db_connection()) as conn:
+        baselines = {(gid, ch): json.loads(body) for gid, ch, body in conn.execute('SELECT gateway_id,channel,snapshot FROM baselines')}
+    return [dbc.Alert([html.Strong(agent + ': '), message], color=color) for color, agent, message in assess_health(devices, status, free, baselines=baselines)]
 
 @app.callback(Output("debug-log-output", "children", allow_duplicate=True), Input("clear-log-btn", "n_clicks"), prevent_initial_call=True)
 def clear_debug_log(n_clicks):
@@ -1619,14 +1584,22 @@ def start_recording_job(n_clicks, duration_hours, gateway_id):
     if not n_clicks or not gateway_id: return no_update
     try:
         duration_hours_int = int(duration_hours)
+        if not 1 <= duration_hours_int <= 8760:
+            raise ValueError('Recording duration must be between 1 and 8760 hours')
         start_time = datetime.now()
         end_time = start_time + timedelta(hours=duration_hours_int)
         job_id = str(uuid.uuid4())
         conn = get_db_connection()
-        conn.execute("INSERT INTO recording_jobs (job_id, gateway_id, start_time, end_time, duration_hours, status) VALUES (?, ?, ?, ?, ?, ?)", (job_id, gateway_id, start_time, end_time, duration_hours_int, 'active'))
-        conn.commit()
-        conn.close()
-        with job_lock: active_jobs[gateway_id] = {'job_id': job_id, 'end_time': end_time}
+        with job_lock:
+            if gateway_id in active_jobs:
+                conn.close()
+                return no_update
+            try:
+                conn.execute("INSERT INTO recording_jobs (job_id, gateway_id, start_time, end_time, duration_hours, status) VALUES (?, ?, ?, ?, ?, ?)", (job_id, gateway_id, start_time, end_time, duration_hours_int, 'active'))
+                conn.commit()
+                active_jobs[gateway_id] = {'job_id': job_id, 'end_time': end_time}
+            finally:
+                conn.close()
         log_to_web(f"✅ Started new recording job {job_id} for {gateway_id}.")
         return {"type": "job_status_update", "gateway_id": gateway_id}
     except Exception as e:
@@ -1640,11 +1613,13 @@ def stop_recording_job(n_clicks, gateway_id):
         with job_lock:
             if gateway_id not in active_jobs: return no_update
             job_id = active_jobs[gateway_id]['job_id']
-            del active_jobs[gateway_id]
-        conn = get_db_connection()
-        conn.execute("UPDATE recording_jobs SET status='completed', end_time=? WHERE job_id=?", (datetime.now(), job_id))
-        conn.commit()
-        conn.close()
+            conn = get_db_connection()
+            try:
+                conn.execute("UPDATE recording_jobs SET status='completed', end_time=? WHERE job_id=?", (datetime.now(), job_id))
+                conn.commit()
+                del active_jobs[gateway_id]
+            finally:
+                conn.close()
         log_to_web(f"✅ Manually stopped recording job {job_id}.")
         return {"type": "job_status_update", "gateway_id": gateway_id}
     except Exception as e:
@@ -1660,12 +1635,13 @@ def download_job_excel(n_clicks):
         job_info = conn.execute("SELECT gateway_id, start_time, end_time FROM recording_jobs WHERE job_id=?", (job_id,)).fetchone()
         if not job_info: return no_update
         gateway_id, start, end = job_info
-        df = pd.read_sql_query("SELECT timestamp, channel, metric_name, value, rpm FROM trends WHERE gateway_id = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp, channel, metric_name", conn, params=(gateway_id, start, end))
+        df = pd.read_sql_query("SELECT timestamp, channel, metric_name, value, rpm, context FROM trends WHERE gateway_id = ? AND timestamp BETWEEN ? AND ? ORDER BY timestamp, channel, metric_name", conn, params=(gateway_id, start, end))
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df = export_frame(df)
             df.to_excel(writer, sheet_name='All_Trend_Data', index=False)
             if not df.empty:
-                try: df.pivot_table(index=['timestamp', 'channel'], columns='metric_name', values='value').reset_index().to_excel(writer, sheet_name='Pivoted_Data', index=False)
+                try: df.pivot_table(index=['timestamp', 'channel', 'unit', 'filter', 'detection'], columns='metric_name', values='value').reset_index().to_excel(writer, sheet_name='Pivoted_Data', index=False)
                 except Exception: pass
         output.seek(0)
         return dcc.send_bytes(output.getvalue(), filename=f"recording_{gateway_id}_{start.strftime('%Y%m%d_%H%M')}.xlsx")
@@ -1700,7 +1676,8 @@ def delete_job_data(n_clicks):
 @app.callback(Output("device-dashboard-container", "children"), [Input("live-update-trigger", "data"), Input("device-config-store", "data"), Input({"type": "metric-select-dd", "gateway": ALL, "channel": ALL}, "value"), State('store-accordion-state', 'data')])
 def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values, active_accordion_item):
     with data_lock: storage_copy = copy.deepcopy(data_storage)
-    if not storage_copy: return []
+    if not storage_copy:
+        return dbc.Alert([html.H5('Waiting for sensor data'), html.P('Connect your MQTT broker to discover devices and display live measurements.'), dbc.Button('Configure MQTT', href='/mqtt', color='primary')], color='light', className='border p-4')
     if not device_config_store: device_config_store = {}
     
     metric_map = {}
@@ -1749,10 +1726,7 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
         device_boxes_row = []; any_active = False
         for ch in ['1', '2', '3', '4']:
             ch_data = device_data.get("channels", {}).get(ch)
-            if ch_data and ch_data.get("timestamp") and ch_data["timestamp"] != "N/A":
-                try: 
-                    if (datetime.now() - datetime.strptime(ch_data["timestamp"], '%Y-%m-%d %H:%M:%S')) < timedelta(minutes=5): any_active = True
-                except ValueError: pass
+            if ch_data and freshness(ch_data)['status'] == 'fresh': any_active = True
             device_boxes_row.append(create_channel_box(ch, gateway_id, ch_data, device_config))
         device_boxes_row.append(create_rpm_box(gateway_id, device_data.get("rpm", 0), any_active, device_config))
         
@@ -1769,12 +1743,12 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
                     ch_data = device_data.get("channels", {}).get(ch)
                     if not ch_data: row_graphs.append(dbc.Col(dbc.Alert(f"Waiting for data CH{ch}...", color="light"), width=12)); continue
                     
-                    times = list(ch_data.get("trend_times", [])); values = list(ch_data.get("trends", {}).get(selected_metric, []))
+                    times = list(ch_data.get("trend_x", {}).get(selected_metric, ch_data.get("trend_times", []))); values = list(ch_data.get("trends", {}).get(selected_metric, []))
                     fig = go.Figure()
-                    fig.update_layout(title=f"CH{ch} - {selected_metric}", template="plotly_white", margin=dict(l=40,r=20,t=40,b=30), height=250, yaxis_title=selected_metric)
+                    fig.update_layout(title=f"CH{ch} - {selected_metric}", template="plotly_white", margin=dict(l=40,r=20,t=40,b=30), height=250, yaxis_title=f"{selected_metric} ({ch_data.get('metadata', {}).get(selected_metric, {}).get('unit', 'unknown')})")
                     if times and values: fig.add_trace(go.Scatter(x=times[:min(len(times), len(values))], y=values[:min(len(times), len(values))], line=dict(color=colors[ch], shape='spline')))
                     
-                    ctrl = dbc.Row([dbc.Col(dcc.Dropdown(id={'type': 'metric-select-dd', 'gateway': gateway_id, 'channel': ch}, options=[{'label': 'Velocity (mm/s)', 'value': 'Velocity'}, {'label': 'Acceleration (g)', 'value': 'Acceleration'}, {'label': 'Crest Factor', 'value': 'Crest Factor'}, {'label': 'Displacement (µm)', 'value': 'Displacement'}, {'label': 'True Peak (g)', 'value': 'True Peak'}, {'label': 'Std Deviation', 'value': 'Std Deviation'}], value=selected_metric, clearable=False, style={'fontSize': '0.9em'}), width=7), dbc.Col(dbc.Button("Clear", id={'type': 'clear-trend-btn', 'gateway': gateway_id, 'channel': ch}, size="sm", color="warning", outline=True), width="auto", className="ms-auto")], justify="between", className="mb-2")
+                    ctrl = dbc.Row([dbc.Col(dcc.Dropdown(id={'type': 'metric-select-dd', 'gateway': gateway_id, 'channel': ch}, options=[{'label': 'Velocity', 'value': 'Velocity'}, {'label': 'Acceleration', 'value': 'Acceleration'}, {'label': 'Crest Factor', 'value': 'Crest Factor'}, {'label': 'Displacement', 'value': 'Displacement'}, {'label': 'True Peak', 'value': 'True Peak'}, {'label': 'Std Deviation', 'value': 'Std Deviation'}], value=selected_metric, clearable=False, style={'fontSize': '0.9em'}), width=7), dbc.Col(dbc.Button("Clear", id={'type': 'clear-trend-btn', 'gateway': gateway_id, 'channel': ch}, size="sm", color="warning", outline=True), width="auto", className="ms-auto")], justify="between", className="mb-2")
                     row_graphs.append(dbc.Col([dbc.Card(dbc.CardBody([ctrl, dcc.Graph(figure=fig, config={'displayModeBar': False})]))], lg=6, xs=12, className="mb-3"))
                 
                 if checks.get("RPM", False):
@@ -1813,10 +1787,7 @@ def update_device_info(trigger_data):
     items = []
     for gid in sorted(storage_copy.keys()):
         last = storage_copy[gid].get('last_seen', 'N/A')
-        is_stale = True
-        try: 
-            if last != 'N/A' and (datetime.now() - datetime.strptime(last, '%Y-%m-%d %H:%M:%S')) < timedelta(minutes=5): is_stale = False
-        except ValueError: pass
+        is_stale = freshness(storage_copy[gid])['status'] != 'fresh'
         items.append(dbc.ListGroupItem([dbc.Badge("Offline" if is_stale else "Online", color="danger" if is_stale else "success", className="me-2"), f"Serial: {gid} (Last Seen: {last})"], className="d-flex justify-content-between align-items-center"))
     return dbc.ListGroup(items, flush=True)
 
@@ -1833,22 +1804,22 @@ def handle_graph_modal(wf_ts, spec_ts, close_ts, wf_ids, spec_ids):
         gid = cid['gateway']; ch = cid['channel']
         
         with data_lock:
-            d_data = data_storage.get(gid, {})
+            d_data = copy.deepcopy(data_storage.get(gid, {}))
             c_data = d_data.get("channels", {}).get(ch)
             rpm = d_data.get("rpm", 0)
             if not c_data: return [True, "Error", go.Figure().update_layout(title="No data found"), html.Div()]
             
             ts = c_data.get("timestamp", "N/A")
             if gtype == 'wf':
-                y = np.array(c_data.get("waveform_data", [])); fs = c_data.get("sampling_freq", 0)
-                if y.size == 0: return [True, "No Waveform Data", go.Figure(), html.Div()]
-                x = np.linspace(0, y.size/fs, y.size)
-                fig = go.Figure(data=go.Scatter(x=x, y=y.tolist(), mode='lines')).update_layout(title=f"Waveform ({ts})", xaxis_title="Time (s)", yaxis_title="g")
+                y = np.array(c_data.get("waveform_data", [])); fs = c_data.get("waveform_context", {}).get("sampling_freq")
+                if y.size == 0 or not fs: return [True, "No validated waveform", go.Figure(), html.Div()]
+                x = np.arange(y.size) / fs
+                fig = go.Figure(data=go.Scatter(x=x, y=y.tolist(), mode='lines')).update_layout(title=f"Waveform ({ts})", xaxis_title="Time (s)", yaxis_title="Published waveform (sensor units)")
                 return [True, f"Waveform - {gid} CH{ch}", fig, html.Div()]
             else:
-                y = np.array(c_data.get("spectrum_data", [])); bw = c_data.get("bandwidth", 0); lines = c_data.get("lines", 0)
+                snapshot = dict(c_data.get("spectrum_context", {}), spectrum_data=c_data.get("spectrum_data", []))
+                x, y = spectrum_xy(snapshot)
                 if y.size == 0: return [True, "No Spectrum Data", go.Figure(), html.Div()]
-                x = np.linspace(0, bw, lines + 1)[:y.size]
                 fig = go.Figure(data=go.Scatter(x=x, y=y.tolist(), mode='lines')).update_layout(title=f"Spectrum ({ts})", xaxis_title="Hz", yaxis_title="Amp")
                 peaks, _ = find_peaks(y, height=PEAK_HEIGHT_THRESHOLD)
                 ptable = html.Div()
@@ -1856,7 +1827,7 @@ def handle_graph_modal(wf_ts, spec_ts, close_ts, wf_ids, spec_ids):
                     fig.add_trace(go.Scatter(x=x[peaks], y=y[peaks], mode='markers', marker=dict(color='red', size=8, symbol='x'), name='Peaks'))
                     rows = [html.Tr([html.Td(f"{x[p]:.2f}"), html.Td(f"{y[p]:.4f}")]) for p in peaks]
                     ptable = dbc.Table([html.Thead(html.Tr([html.Th("Freq"), html.Th("Amp")])), html.Tbody(rows)], bordered=True, size='sm')
-                if rpm > 0: fig.add_vline(x=rpm/60, line_dash="dash", line_color="red", annotation_text="1x RPM")
+                if rpm and rpm > 0: fig.add_vline(x=rpm/60, line_dash="dash", line_color="red", annotation_text="1x RPM")
                 return [True, f"Spectrum - {gid} CH{ch}", fig, ptable]
     except Exception: return [True, "Error", go.Figure(), html.Div()]
 
@@ -1890,28 +1861,16 @@ def save_channel_label(vals, store):
 
 @app.callback([Output("alarm-modal", "is_open"), Output("alarm-modal-header", "children"), Output("alarm-modal-body", "children"), Output('store-alarm-config-data', 'data')], Input({'type': 'ch-alarm-btn', 'gateway': ALL, 'channel': ALL}, 'n_clicks'), State('device-config-store', 'data'), prevent_initial_call=True)
 def open_alarm_modal(n, store):
-    if not ctx.triggered_id or not ctx.triggered[0]['value']: return [no_update]*4
-    gid = str(ctx.triggered_id['gateway']); ch = str(ctx.triggered_id['channel'])
-    conf = store.get(gid, {}).get("alarms", {}).get(ch, {})
-    body = html.Div([
-        dbc.Switch(id='alarm-enable-toggle', label="Enable Alarms", value=conf.get("enabled", False), className="mb-3"), html.Hr(),
-        dbc.Label("Warning (mm/s)"), dbc.Input(id='alarm-vel-warn-input', type='number', value=conf.get("vel_warn", 0.0), step=0.1),
-        dbc.Label("Alert (mm/s)", className="mt-2"), dbc.Input(id='alarm-vel-alert-input', type='number', value=conf.get("vel_alert", 0.0), step=0.1)
-    ])
-    return True, f"Alarms - {gid} CH{ch}", body, {'gateway_id': gid, 'channel_id': ch}
+    if not ctx.triggered_id or not ctx.triggered[0]['value']:
+        return [no_update] * 4
+    gid, ch = ctx.triggered_id['gateway'], ctx.triggered_id['channel']
+    return True, f'Alarm management - {gid} CH{ch}', html.Div([
+        html.P('Configure measurement-aware rules, persistence, hysteresis, and acknowledgments in Alarm management.'),
+        dbc.Button('Open Alarm management', href='/alarms', color='primary')]), {'gateway_id': gid, 'channel_id': ch}
 
-@app.callback([Output('device-config-store', 'data', allow_duplicate=True), Output("alarm-modal", "is_open", allow_duplicate=True)], [Input("alarm-modal-save-btn", "n_clicks"), Input("alarm-modal-close-btn", "n_clicks")], [State('store-alarm-config-data', 'data'), State('alarm-enable-toggle', 'value'), State('alarm-vel-warn-input', 'value'), State('alarm-vel-alert-input', 'value'), State('device-config-store', 'data')], prevent_initial_call=True)
-def handle_alarm_save(save, close, meta, en, warn, alert, store):
-    if ctx.triggered_id == "alarm-modal-close-btn": return no_update, False
-    if ctx.triggered_id == "alarm-modal-save-btn" and meta:
-        gid = str(meta['gateway_id']); ch = str(meta['channel_id'])
-        new_store = copy.deepcopy(store) if store else {}
-        if gid not in new_store: new_store[gid] = {}
-        if "alarms" not in new_store[gid]: new_store[gid]["alarms"] = {}
-        new_store[gid]["alarms"][ch] = {"enabled": en, "vel_warn": float(warn or 0), "vel_alert": float(alert or 0)}
-        save_device_config_db(gid, new_store[gid])
-        return new_store, False
-    return no_update, no_update
+@app.callback(Output('alarm-modal', 'is_open', allow_duplicate=True), Input('alarm-modal-close-btn', 'n_clicks'), prevent_initial_call=True)
+def close_alarm_modal(n):
+    return False
 
 @app.callback([Output("pi-serial", "children"), Output("pi-datetime", "children"), Output("pi-uptime", "children"), Output("pi-memory", "children"), Output("pi-temp", "children"), Output("pi-disk", "children"), Output("pi-cpuload", "children"), Output("pi-ip", "children")], Input("system_info_interval", "n_intervals"))
 def update_system_info(n):
@@ -1942,20 +1901,14 @@ def load_history(n, start, end, gid, ch, met):
     try:
         end_dt = datetime.fromisoformat(end) + timedelta(days=1)
         conn = get_db_connection()
-        q = "SELECT timestamp, value, rpm FROM trends WHERE gateway_id=? AND channel=? AND metric_name=? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
+        q = "SELECT timestamp, value, rpm, context FROM trends WHERE gateway_id=? AND channel=? AND metric_name=? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp ASC"
         p = (gid, ch, met, start, end_dt.isoformat())
         if met == 'rpm':
-            q = "SELECT timestamp, rpm FROM trends WHERE gateway_id=? AND channel='1' AND timestamp BETWEEN ? AND ? GROUP BY timestamp ORDER BY timestamp ASC"
+            q = "SELECT timestamp, rpm FROM trends WHERE gateway_id=? AND channel='1' AND timestamp >= ? AND timestamp < ? GROUP BY timestamp ORDER BY timestamp ASC"
             p = (gid, start, end_dt.isoformat())
         df = pd.read_sql_query(q, conn, params=p)
         conn.close()
-        fig = go.Figure()
-        if not df.empty:
-            y_val = df['rpm'] if met == 'rpm' else df['value']
-            fig.add_trace(go.Scatter(x=df['timestamp'], y=y_val, mode='lines+markers'))
-            fig.update_layout(title=f"{gid} CH{ch} {met}", template="plotly_white")
-        else: fig.update_layout(title="No Data Found")
-        return fig
+        return history_figure(df, f'{gid} CH{ch} {met}', rpm=met == 'rpm')
     except Exception: return go.Figure()
 
 @app.callback(Output('download-history-component', 'data'), Input('download-history-csv-btn', 'n_clicks'), [State('history-date-picker', 'start_date'), State('history-date-picker', 'end_date'), State('history-gateway-select', 'value'), State('history-channel-select', 'value'), State('history-metric-select', 'value')], prevent_initial_call=True)
@@ -1964,14 +1917,14 @@ def download_history(n, start, end, gid, ch, met):
     try:
         end_dt = datetime.fromisoformat(end) + timedelta(days=1)
         conn = get_db_connection()
-        q = "SELECT timestamp, value, rpm FROM trends WHERE gateway_id=? AND channel=? AND metric_name=? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC"
+        q = "SELECT timestamp, value, rpm, context FROM trends WHERE gateway_id=? AND channel=? AND metric_name=? AND timestamp >= ? AND timestamp < ? ORDER BY timestamp ASC"
         p = (gid, ch, met, start, end_dt.isoformat())
         if met == 'rpm':
-            q = "SELECT timestamp, rpm FROM trends WHERE gateway_id=? AND channel='1' AND timestamp BETWEEN ? AND ? GROUP BY timestamp ORDER BY timestamp ASC"
+            q = "SELECT timestamp, rpm FROM trends WHERE gateway_id=? AND channel='1' AND timestamp >= ? AND timestamp < ? GROUP BY timestamp ORDER BY timestamp ASC"
             p = (gid, start, end_dt.isoformat())
         df = pd.read_sql_query(q, conn, params=p)
         conn.close()
-        return dcc.send_data_frame(df.to_csv, filename=f"hist_{gid}_{ch}_{met}.csv", index=False)
+        return dcc.send_data_frame(export_frame(df).to_csv, filename=f"hist_{gid}_{ch}_{met}.csv", index=False)
     except Exception: return no_update
 
 # --- RESTART / DELETE CONFIRMATIONS ---
@@ -1998,7 +1951,7 @@ def do_delete_device(n, gid, store):
             conn = get_db_connection()
             conn.execute("DELETE FROM recording_jobs WHERE job_id=?", (jid,))
             conn.commit(); conn.close()
-    new_store = copy.deepcopy(store); new_store.pop(str(gid), None)
+    new_store = copy.deepcopy(store) if store else {}; new_store.pop(str(gid), None)
     return new_store, None
 
 @app.callback(Output('confirm-restart-dialog', 'displayed'), Input({'type': 'restart-app-btn', 'page': ALL}, 'n_clicks'), prevent_initial_call=True)
@@ -2007,10 +1960,10 @@ def confirm_restart(n): return True if any(n) else False
 @app.callback(Output('live-update-trigger', 'data', allow_duplicate=True), Input('confirm-restart-dialog', 'submit_n_clicks'), prevent_initial_call=True)
 def do_restart(n):
     if not n: return no_update
-    def reboot():
+    def restart_process():
         time.sleep(1)
-        subprocess.run(['sudo', '/sbin/reboot'])
-    Thread(target=reboot).start()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    Thread(target=restart_process, daemon=True).start()
     return no_update
 
 @app.callback(Output('sidebar', 'style'), Output("page-content", "style"), Output("sidebar-state-store", "data"), Input("sidebar-toggle-btn", "n_clicks"), State("sidebar-state-store", "data"), prevent_initial_call=True)
@@ -2034,15 +1987,17 @@ def handle_time_buttons(save, sync, auto, ntp, tz):
     tid = ctx.triggered_id
     if tid == 'time-save-btn':
         try:
-            subprocess.run(['sudo', 'timedatectl', 'set-ntp', str(auto).lower()])
+            subprocess.run(['sudo', 'timedatectl', 'set-ntp', str(auto).lower()], check=True, timeout=15)
             if not auto and tz:
-                subprocess.run(['sudo', 'timedatectl', 'set-timezone', tz])
+                subprocess.run(['sudo', 'timedatectl', 'set-timezone', tz], check=True, timeout=15)
             return "Settings saved. Restart to apply.", "success", True
         except Exception as e: return f"Error: {e}", "danger", True
     if tid == 'time-sync-btn':
         if auto: return "Disable Auto-set first.", "warning", True
         try:
-            subprocess.run(['sudo', 'ntpdate', ntp])
+            if not ntp or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.:-]{0,252}', ntp):
+                raise ValueError('Enter a valid NTP hostname or address')
+            subprocess.run(['sudo', 'ntpdate', ntp], check=True, timeout=20)
             return "Time synced!", "success", True
         except Exception as e: return f"Sync failed: {e}", "danger", True
     return no_update, no_update, no_update
@@ -2053,7 +2008,9 @@ def save_mqtt(n, proto, host, port, user, pw, topic):
     if not n: return no_update
     try:
         conf = {"PROTOCOL": proto, "BROKER": host.strip(), "PORT": int(port), "TOPIC": topic.strip(), "USERNAME": user.strip(), "PASSWORD": pw}
-        with open(MQTT_CONFIG_FILE, 'w') as f: json.dump(conf, f, indent=4)
+        if proto not in ('mqtt://', 'mqtts://') or not conf['BROKER'] or not conf['TOPIC'] or not 1 <= conf['PORT'] <= 65535:
+            raise ValueError('Invalid MQTT settings')
+        atomic_json_write(MQTT_CONFIG_FILE, conf)
         return True
     except Exception: return no_update
 
@@ -2063,7 +2020,7 @@ def test_mqtt(n, proto, host, port, user, pw):
     res = {"status": "pending"}
     def on_c(c, u, f, rc): res["status"] = "success" if rc==0 else f"Fail code {rc}"; c.disconnect()
     try:
-        c = mqtt.Client()
+        c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
         if user: c.username_pw_set(user, pw)
         c.on_connect = on_c
         if proto == "mqtts://": c.tls_set(tls_version=ssl.PROTOCOL_TLS)
@@ -2092,6 +2049,7 @@ def handle_modbus(en, add, delete, up, down, sens, ch, field):
         save_modbus_config(conf)
     elif tid == 'modbus-add-btn':
         if not sens or not field: return "Select sensor/field", "danger", True, no_update, no_update, no_update, no_update
+        if len(regs) >= 2048: return 'Maximum 2048 mappings reached', 'danger', True, no_update, no_update, no_update, no_update
         ch_save = "RPM" if field == "RPM" else ch
         regs.append({"sensor": sens, "channel": ch_save, "field": field, "data_type": "float"})
         conf['registers'] = regs; save_modbus_config(conf); msg = "Register Added"; open_alert = True
@@ -2111,7 +2069,7 @@ def disable_ch(v): return v == 'RPM'
 @app.callback(Output('modbus-table-container', 'children'), Input("live-update-trigger", "data"), prevent_initial_call=True)
 def update_modbus_tbl(data):
     try:
-        if json.loads(data).get("type") not in ["data_update", "modbus_config_change"]: return no_update
+        if normalize_event(data).get("type") not in ["data_update", "modbus_config_change"]: return no_update
     except: return no_update
     conf = load_modbus_config()
     if not conf.get("enabled"): return no_update
@@ -2151,7 +2109,7 @@ def update_opc_tree(trigger, is_enabled):
         device_content = []
         
         # A. RPM Node
-        rpm_val = device_data.get("rpm", 0.0)
+        rpm_val = device_data.get("rpm") or 0.0
         device_content.append(
             html.Div([
                 html.Div([
@@ -2218,19 +2176,49 @@ def update_opc_tree(trigger, is_enabled):
     [Output("opc-status-text", "children"),
      Output("opc-status-text", "className"),
      Output("opc-status-icon", "className")],
-    Input("opc-server-switch", "value")
+    [Input("opc-server-switch", "value"), Input('system_info_interval', 'n_intervals')]
 )
-def toggle_opc_status(is_enabled):
+def toggle_opc_status(is_enabled, n=0):
     global opcua_enabled_flag
-    opcua_enabled_flag = is_enabled
-    # Note: In a real asyncua implementation, stopping the server loop 
-    # cleanly from a thread requires distinct signal logic. 
-    # Here we update the global flag which logical loops should check.
+    if ctx.triggered_id == 'opc-server-switch':
+        opcua_enabled_flag = bool(is_enabled)
+    is_enabled = opcua_enabled_flag
+    # The service loop applies the requested state; report its observed state.
     
-    if is_enabled:
+    if is_enabled and opcua_running:
         return "Running", "fw-bold text-success", "fas fa-check-circle fa-3x text-success"
-    else:
+    elif not is_enabled and not opcua_running:
         return "Stopped", "fw-bold text-danger", "fas fa-stop-circle fa-3x text-danger"
+    return 'Starting' if is_enabled else 'Stopping', 'fw-bold text-warning', 'fas fa-clock fa-3x text-warning'
+
+def get_live_snapshot():
+    with data_lock:
+        return copy.deepcopy(data_storage)
+
+
+def apply_asset_settings(gid, ch, settings):
+    with data_lock:
+        channel = data_storage.get(gid, {}).get('channels', {}).get(ch)
+        if channel is not None:
+            channel['publish_interval'] = settings['publish_interval']
+            channel['asset'] = settings
+        if gid in data_storage:
+            data_storage[gid]['publish_interval'] = max(
+                (item.get('publish_interval', 60) for item in data_storage[gid]['channels'].values()), default=60)
+
+
+workspace_views.register(app, get_db_connection, get_live_snapshot, apply_asset_settings)
+
+
+def maintenance_thread_func():
+    while True:
+        try:
+            with closing(get_db_connection()) as conn:
+                historian.maintenance_once(conn, DATA_FOLDER)
+        except Exception:
+            logging.exception('Scheduled backup/report/retention failed; will retry')
+        time.sleep(60)
+
 
 # =========================
 # MAIN EXECUTION
@@ -2242,17 +2230,16 @@ if __name__ == "__main__":
     # 1. Start MQTT Thread (Data Ingestion)
     mqtt_thread = Thread(target=mqtt_thread_func, daemon=True)
     mqtt_thread.start()
+    Thread(target=maintenance_thread_func, daemon=True).start()
     
-    # 2. Start WebSocket Thread (Frontend Push Updates)
-    ws_server_thread = Thread(target=start_websocket_server_thread, daemon=True)
-    ws_server_thread.start()
+    # Browser updates use authenticated same-origin polling.
     
     # 3. Start Job Manager (Recording Logic)
     job_thread = Thread(target=job_management_thread_func, daemon=True)
     job_thread.start()
 
     # 4. Start Modbus Server Threads
-    modbus_server_thread = Thread(target=modbus_server_thread_func, daemon=True)
+    modbus_server_thread = Thread(target=modbus_supervisor, daemon=True)
     modbus_server_thread.start()
     modbus_updater_thread = Thread(target=modbus_updater_thread_func, daemon=True)
     modbus_updater_thread.start()
@@ -2262,8 +2249,9 @@ if __name__ == "__main__":
     opcua_thread = Thread(target=opcua_thread_entry, daemon=True)
     opcua_thread.start()
     
-    log_to_web("🚀 Dashboard running on http://0.0.0.0:8050")
+    log_to_web("🚀 Dashboard starting; host and port follow the VDS_HOST and VDS_PORT settings")
     
     # Run Dash App
     # use_reloader=False is crucial when using threads to prevent duplication
-    app.run(host="0.0.0.0", port=8050, debug=False, use_reloader=False)
+    from waitress import serve
+    serve(app.server, host=os.environ.get('VDS_HOST', '127.0.0.1'), port=int(os.environ.get('VDS_PORT', '8050')), threads=8)

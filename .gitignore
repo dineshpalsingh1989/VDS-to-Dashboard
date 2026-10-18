@@ -201,6 +201,13 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+# Runtime data and local configuration (may contain broker credentials)
+device_data/
+mqtt_config.json
+modbus_config.json
+.uv-cache/
+.review/
+
 # Marimo
 marimo/_static/
 marimo/_lsp/
