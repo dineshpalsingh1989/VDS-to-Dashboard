@@ -1,5 +1,5 @@
 // Enhance exported real application screens. This file has no backend actions.
-const response = await fetch(new URL('snapshots.json', import.meta.url));
+const response = await fetch(new URL('snapshots.json', import.meta.url), {cache: 'no-cache'});
 if (!response.ok) throw new Error('Could not load the sample dashboard');
 const { bank, pages, shell } = await response.json();
 const $ = id => document.getElementById(id);
