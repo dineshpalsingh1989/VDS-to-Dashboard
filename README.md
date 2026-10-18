@@ -5,10 +5,13 @@
 
 **[Open the interactive dashboard demo →](https://dineshpalsingh1989.github.io/Wilcoxon-VDS/)**
 
-Try the dashboard in your browser with no installation or login. Select a channel,
-explore velocity trends and spectra, switch between normal/rising/missing-sensor
-scenarios, and download sample CSV data. All measurements and events are synthetic.
-The public demo is a separate preview; it never connects to equipment or your database.
+Try the real application's layout in your browser with no installation or login.
+The demo uses the same dark header, full navigation menu, device accordion,
+four measurement cards, RPM card, and Plotly charts. Explore all 14 pages,
+toggle channel trends, open waveform/spectrum plots, change the diagnostic
+channel/order axis, and download sample history CSV. Data is a captured synthetic
+example, not live measurements. Configuration and service controls are disabled.
+The preview never connects to equipment or your database.
 
 MQTT ingestion, a SQLite historian, measurement-aware alarms, diagnostic plots,
 and advisory health agents for Wilcoxon VDS130 data. The dashboard also exposes
@@ -156,9 +159,17 @@ python -m http.server 8080 --directory demo --bind 127.0.0.1
 ```
 
 Open **http://127.0.0.1:8080**. Source files are in `demo/`. The
-[demo workflow](.github/workflows/demo.yml) checks the sample model and Chrome
-interactions, then publishes only that folder to GitHub Pages on changes to main.
+[demo workflow](.github/workflows/demo.yml) renders the actual application in an
+isolated temporary environment, checks the generated views and Chrome interactions,
+then publishes only the static `demo/` folder to GitHub Pages. Application layout
+and stylesheet changes trigger regeneration so the demo follows the real UI.
 Repository Pages settings must use **GitHub Actions** as the publishing source.
+
+To regenerate the preview locally, install the application dependencies and
+Node.js 24, ensure Chrome is installed, then run `node scripts/build-demo.mjs`.
+Set `DEMO_PYTHON` to your virtual environment's Python executable if necessary.
+The exporter creates synthetic data in a temporary directory and starts no MQTT,
+Modbus, OPC UA, or maintenance workers. See [demo maintenance notes](demo/README.md).
 
 ### Run the full application
 

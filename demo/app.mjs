@@ -1,105 +1,239 @@
-import { channels, scenarios, snapshot, spectrum, replayTime, events, csv } from './data.mjs';
-
+// Enhance exported real application screens. This file has no backend actions.
+const response = await fetch(new URL('snapshots.json', import.meta.url));
+if (!response.ok) throw new Error('Could not load the sample dashboard');
+const { bank, pages, shell } = await response.json();
 const $ = id => document.getElementById(id);
-let scenario = 'normal';
-let tick = 0;
-let selected = 1;
-let paused = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const titles = { overview: 'Pump overview', diagnostics: 'Vibration diagnostics', alarms: 'Alarm events', guide: 'How it works' };
-const subtitles = { overview: 'Four measurement points. One view of your machine.', diagnostics: 'Compare sample captures with their measurement context.', alarms: 'Follow illustrative events across sample scenarios.', guide: 'A quick tour of the monitor and its public demo.' };
-const colors = { teal: '#087f8c', amber: '#b17b26', grey: '#9bacb8', grid: '#e8eef3', text: '#667b8f' };
-function linePath(points, x, y) {
-  let penDown = false;
-  return points.map(p => {
-    if (p.value === null) { penDown = false; return ''; }
-    const command = penDown ? 'L' : 'M'; penDown = true;
-    return `${command}${x(p).toFixed(2)},${y(p.value).toFixed(2)}`;
-  }).join(' ');
-}
-function chart({ title, description, points, baseline, maxX, maxY, xLabel, yLabel, warning, ticks, harmonics = false }) {
-  const w = 1000, h = 265, left = 63, right = 22, top = 24, bottom = 43;
-  const x = value => left + value / maxX * (w - left - right);
-  const y = value => h - bottom - value / maxY * (h - top - bottom);
-  let markup = `<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}"><title>${title}</title><desc>${description}</desc>`;
-  for (let i = 0; i <= 4; i++) {
-    const v = i / 4 * maxY;
-    markup += `<line x1="${left}" y1="${y(v)}" x2="${w-right}" y2="${y(v)}" stroke="${colors.grid}"/><text x="${left-12}" y="${y(v)+4}" text-anchor="end" fill="${colors.text}" font-size="11">${v.toFixed(maxY < 1 ? 2 : 1)}</text>`;
-  }
-  ticks.forEach(t => { markup += `<text x="${x(t.value)}" y="${h-22}" text-anchor="middle" fill="${colors.text}" font-size="11">${t.label}</text>`; });
-  if (warning) markup += `<line x1="${left}" x2="${w-right}" y1="${y(warning)}" y2="${y(warning)}" stroke="${colors.amber}" stroke-dasharray="6 5"/><text x="${w-right}" y="${y(warning)-6}" text-anchor="end" fill="${colors.amber}" font-size="10">Example warning</text>`;
-  if (harmonics) for (let n = 1; n <= 3; n++) {
-    const hz = n * 1480 / 60;
-    markup += `<line x1="${x(hz)}" x2="${x(hz)}" y1="${top}" y2="${h-bottom}" stroke="#d7e1e8" stroke-dasharray="3 4"/><text x="${x(hz)+4}" y="${top+9}" fill="${colors.text}" font-size="9">${n}×</text>`;
-  }
-  if (baseline) markup += `<path d="${linePath(baseline, p => x(p.x), y)}" fill="none" stroke="${colors.grey}" stroke-width="1.6" stroke-dasharray="5 4"/>`;
-  markup += `<path d="${linePath(points, p => x(p.x), y)}" fill="none" stroke="${colors.teal}" stroke-width="2.4" stroke-linejoin="round"/><text x="${left}" y="12" fill="${colors.text}" font-size="10">${yLabel}</text><text x="${w-right}" y="${h-4}" text-anchor="end" fill="${colors.text}" font-size="10">${xLabel}</text></svg>`;
-  return markup;
-}
-function renderChannels(data) {
-  const container = $('channels');
-  data.forEach(channel => {
-    let button = document.querySelector(`#channels [data-channel="${channel.id}"]`);
-    if (!button) {
-      button = document.createElement('button');
-      button.type = 'button'; button.className = 'channel-card'; button.dataset.channel = channel.id;
-      button.addEventListener('click', () => { selected = channel.id; $('diag-channel').value = selected; render(); });
-      container.append(button);
-    }
-    const status = channel.stale ? 'Stale' : channel.warning ? 'Warning' : 'Normal';
-    button.setAttribute('aria-pressed', String(selected === channel.id));
-    button.setAttribute('aria-label', `CH${channel.id}, ${channel.name}, ${status}, ${channel.value.toFixed(2)} millimeters per second RMS${channel.stale ? ', last known value' : ''}`);
-    const history = channel.history.slice(-24);
-    const spark = linePath(history, p => (p.minute - history[0].minute) / 23 * 200, v => 35 - v / 7 * 33);
-    button.innerHTML = `<span class="channel-top"><span>CHANNEL ${channel.id}</span><span class="pill ${channel.stale ? 'stale' : channel.warning ? 'warning' : ''}">${status}</span></span><h3>${channel.name}</h3><span class="direction">${channel.direction}</span><strong class="reading">${channel.value.toFixed(2)} <small>mm/s RMS</small></strong><svg class="sparkline" viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true"><path d="${spark}" fill="none" stroke="${channel.stale ? colors.grey : channel.warning ? colors.amber : colors.teal}" stroke-width="2"/></svg><span class="channel-meta"><span>${channel.acceleration.toFixed(2)} g RMS · reference</span><span>${channel.stale ? `Last: ${channel.ageMinutes} min ago` : 'Sample capture'}</span></span>`;
-  });
-}
-function render() {
-  const data = snapshot(scenario, tick), active = data.find(c => c.id === selected);
-  $('scenario-description').textContent = scenarios[scenario];
-  $('asset-condition').textContent = scenario === 'missing' ? 'Data incomplete' : data.some(c => c.warning) ? 'Warning' : 'Normal';
-  $('condition-detail').textContent = scenario === 'missing' ? 'CH3 is stale · inspect last capture' : scenario === 'rising' ? 'CH1 exceeds an example threshold' : 'Within example thresholds';
-  $('reporting').innerHTML = `${data.filter(c => !c.stale).length} <em>/ 4</em>`;
-  $('capture-time').textContent = replayTime(59 + tick);
-  renderChannels(data);
-  const history = active.history.slice(-Number($('window').value));
-  const start = history[0].minute, range = history.length - 1;
-  $('trend-title').textContent = `CH${active.id} · ${active.name} · Velocity trend${active.stale ? ' (stale)' : ''}`;
-  $('trend-chart').innerHTML = chart({ title: `CH${active.id} sample velocity trend`, description: `Synthetic RMS velocity in mm/s. ${active.stale ? 'Five minutes of missing readings are left blank.' : 'A dashed line shows the illustrative 4.5 mm/s warning level.'}`, points: history.map(p => ({ x: p.minute - start, value: p.value })), maxX: range, maxY: 7, xLabel: 'Replay time (UTC)', yLabel: 'mm/s RMS', warning: 4.5, ticks: Array.from({length: 5}, (_,i) => ({value: i/4*range, label: replayTime(start + Math.round(i/4*range)).slice(0,5)})) });
-  const spec = spectrum(active, scenario), base = $('baseline').checked ? spectrum(active, scenario, true) : null;
-  $('spectrum-chart').innerHTML = chart({ title: `CH${active.id} synthetic spectrum${active.stale ? ', last known capture' : ''}`, description: 'Illustrative acceleration amplitude with harmonic markers and an optional example baseline. No machine fault diagnosis is made.', points: spec.map(p => ({x:p.hz,value:p.value})), baseline: base?.map(p => ({x:p.hz,value:p.value})), maxX:500,maxY:0.32,xLabel:$('orders').checked ? 'Order (frequency / running speed)' : 'Frequency (Hz)', yLabel:'Amplitude (g)',harmonics:true,ticks:Array.from({length:6},(_,i)=>({value:i*100,label:$('orders').checked ? (i*100/(1480/60)).toFixed(1)+'×' : String(i*100)})) });
-  // DOM text nodes keep future sample labels out of HTML parsing.
-  $('event-rows').replaceChildren(...events(scenario, tick).map(event => {
-    const tr = document.createElement('tr');
-    for (const value of [replayTime(event.minute), event.channel, event.state, event.message]) {
-      const td = document.createElement('td'); td.textContent = value; tr.append(td);
-    }
-    return tr;
-  }));
-  $('pause').textContent = paused ? 'Resume replay' : 'Pause replay';
-  $('replay-status').textContent = paused ? 'Sample replay paused' : 'Sample replay running';
-}
-function navigate() {
-  const view = Object.hasOwn(titles, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
-  document.querySelectorAll('[data-panel]').forEach(panel => panel.hidden = panel.dataset.panel !== view);
-  document.querySelectorAll('[data-view]').forEach(link => link.dataset.view === view ? link.setAttribute('aria-current', 'page') : link.removeAttribute('aria-current'));
-  $('page-title').textContent = titles[view];
-  document.querySelector('.subtitle').textContent = subtitles[view];
-  document.title = `${titles[view]} · Wilcoxon VDS demo`;
-}
-for (const channel of channels) {
-  const option = document.createElement('option'); option.value = channel.id; option.textContent = `CH${channel.id} · ${channel.name}`; $('diag-channel').append(option);
-}
-$('scenario').addEventListener('change', event => { scenario = event.target.value; tick = 0; render(); });
-$('diag-channel').addEventListener('change', event => { selected = Number(event.target.value); render(); });
-for (const id of ['window','baseline','orders']) $(id).addEventListener('change', render);
-$('pause').addEventListener('click', () => { paused = !paused; render(); });
-$('reset').addEventListener('click', () => { tick = 0; scenario = 'normal'; selected = 1; $('scenario').value = 'normal'; $('diag-channel').value = '1'; render(); });
-$('export').addEventListener('click', () => {
-  const channel = snapshot(scenario, tick).find(c => c.id === selected);
-  const url = URL.createObjectURL(new Blob([csv(channel)], {type:'text/csv;charset=utf-8'}));
-  const a = document.createElement('a'); a.href = url; a.download = `synthetic-demo-ch${selected}-${scenario}.csv`; a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+const metrics = ['Velocity', 'Acceleration', 'Crest Factor', 'Displacement', 'True Peak', 'Std Deviation'];
+let channel = '1', modalFocus;
+let orders = false;
+let navigationVersion = 0;
+const trends = new Set(['1']);
+const selectedMetrics = {};
+const main = $('page-content');
+document.body.classList.toggle('demo-nav-hidden', matchMedia('(max-width: 767px)').matches);
+$('demo-shell').innerHTML = shell.header + shell.sidebar;
+$('sidebar-toggle-btn').setAttribute('aria-label', 'Toggle navigation menu');
+$('sidebar-toggle-btn').setAttribute('aria-controls', 'sidebar');
+$('sidebar-toggle-btn').setAttribute('aria-expanded', String(!document.body.classList.contains('demo-nav-hidden')));
+$('sidebar-toggle-btn').addEventListener('click', () => {
+  document.body.classList.toggle('demo-nav-hidden');
+  $('sidebar-toggle-btn').setAttribute('aria-expanded', String(!document.body.classList.contains('demo-nav-hidden')));
+  setTimeout(resize, 350);
 });
-window.addEventListener('hashchange', navigate);
-setInterval(() => { if (!paused && !document.hidden) { tick++; render(); } }, 3000);
-navigate(); render();
+document.querySelectorAll('#sidebar a').forEach(link => {
+  const path = link.getAttribute('href');
+  link.href = '#' + path;
+  link.addEventListener('click', () => {
+    if (matchMedia('(max-width: 767px)').matches) document.body.classList.add('demo-nav-hidden');
+  });
+});
+document.querySelector('nav.navbar a').href = '#/';
+
+function pattern(element) {
+  try { return JSON.parse(element.id); } catch { return {}; }
+}
+function clone(value) { return JSON.parse(JSON.stringify(value)); }
+async function plot(element, figure) {
+  if (!element || !figure) return;
+  const spec = clone(figure);
+  delete spec.layout.width;
+  spec.layout.autosize = true;
+  await window.Plotly.react(element, spec.data, spec.layout, {responsive: true, displaylogo: false, displayModeBar: false});
+}
+function resize() {
+  document.querySelectorAll('.js-plotly-plot').forEach(element => window.Plotly.Plots.resize(element));
+}
+function options(id, choices, value) {
+  const select = $(id);
+  if (!select) return;
+  select.replaceChildren(...choices.map(choice => {
+    const option = document.createElement('option');
+    option.value = typeof choice === 'string' ? choice : choice.value;
+    option.textContent = typeof choice === 'string' ? choice : choice.label;
+    return option;
+  }));
+  select.value = value;
+  select.disabled = false;
+}
+function channelOptions() {
+  return Object.entries(bank.channels).map(([id, data]) => ({value: id,
+    label: `${data.asset.site} / ${data.asset.machine} / ${data.asset.location} / ${data.asset.direction} — ${bank.gateway} CH${id}`}));
+}
+function download(name, text, type = 'text/csv;charset=utf-8') {
+  const url = URL.createObjectURL(new Blob([text], {type}));
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function csv() {
+  const ch = $('history-channel-select')?.value || channel;
+  const metric = $('history-metric-select')?.value || 'Velocity';
+  const data = bank.channels[ch] || bank.channels['1'];
+  const metadata = data.metadata[metric];
+  const rows = ['data_source,capture_time,channel,metric,value,unit,filter,detection'];
+  data.times.forEach((time, i) => rows.push(['synthetic_demo', time, ch, metric, data.history[metric][i], metadata.unit, metadata.filter, metadata.detection].join(',')));
+  return rows.join('\r\n') + '\r\n';
+}
+function readonly() {
+  main.querySelectorAll('button,select,input,textarea').forEach(control => {
+    if (control.tagName === 'INPUT' && !['checkbox', 'radio', 'submit', 'button'].includes(control.type)) control.readOnly = true;
+    else control.disabled = true;
+    control.title = 'Viewer preview — changes and service controls are disabled';
+  });
+  main.querySelectorAll('a[href^="/"]').forEach(anchor => {
+    anchor.removeAttribute('href'); anchor.setAttribute('aria-disabled', 'true');
+    anchor.classList.add('disabled'); anchor.title = 'Unavailable in the public viewer demo';
+  });
+  main.querySelectorAll('form').forEach(form => form.addEventListener('submit', event => event.preventDefault()));
+}
+async function renderTrends() {
+  const template = document.querySelector('.demo-trend-template');
+  if (!template) return;
+  const row = template.parentElement;
+  for (const ch of ['1','2','3','4','RPM']) {
+    let wrapper = row.querySelector(`[data-trend-channel="${ch}"]`);
+    if (!wrapper) {
+      wrapper = template.cloneNode(true); wrapper.classList.remove('demo-trend-template');
+      wrapper.dataset.trendChannel = ch; row.append(wrapper);
+      wrapper.querySelectorAll('[id]').forEach(element => {
+        const id = pattern(element);
+        if (id.type) element.id = JSON.stringify({...id, channel:ch});
+        else element.removeAttribute('id');
+      });
+      wrapper.querySelector('.demo-plot').replaceChildren();
+    }
+    wrapper.hidden = !trends.has(ch);
+    if (wrapper.hidden) continue;
+    const select = wrapper.querySelector('select');
+    if (ch === 'RPM') { select.hidden = true; await plot(wrapper.querySelector('.demo-plot'), bank.figures['trend:RPM']); continue; }
+    const metric = selectedMetrics[ch] || 'Velocity';
+    select.replaceChildren(...metrics.map(name => { const option=document.createElement('option');option.value=name;option.textContent=name;return option; }));
+    select.value=metric;select.disabled=false;select.removeAttribute('title');
+    select.onchange = () => { selectedMetrics[ch] = select.value; renderTrends(); };
+    await plot(wrapper.querySelector('.demo-plot'), bank.figures[`trend:${ch}:${metric}`]);
+  }
+}
+function setupDashboard() {
+  const firstPlot = main.querySelector('.demo-plot');
+  const template = firstPlot?.closest('.col-lg-6');
+  if (template) { template.classList.add('demo-trend-template'); template.dataset.trendChannel='1'; }
+  main.querySelectorAll('input').forEach(input => {
+    const id = pattern(input);
+    if (id.type === 'ch-trend-check' || id.type === 'rpm-trend-check') {
+      const ch=id.channel || 'RPM';input.disabled=false;input.checked=trends.has(ch);input.title='Show or hide this sample trend';
+      input.addEventListener('change',()=>{input.checked?trends.add(ch):trends.delete(ch);renderTrends();});
+    }
+  });
+  main.querySelectorAll('button').forEach(button => {
+    const id=pattern(button);
+    if (id.type === 'ch-wf-btn' || id.type === 'ch-spec-btn') {
+      button.disabled=false;button.title='Inspect the sample capture';
+      button.addEventListener('click',()=>openModal(id.type==='ch-wf-btn'?'waveform':'spectrum',id.channel));
+    }
+    if (button.classList.contains('accordion-button')) {
+      button.disabled=false;button.removeAttribute('title');
+      button.addEventListener('click',()=>{
+        const body=button.closest('.accordion-item').querySelector('.accordion-collapse');
+        const open=button.getAttribute('aria-expanded')!=='true';
+        body.classList.toggle('show',open);button.classList.toggle('collapsed',!open);button.setAttribute('aria-expanded',String(open));
+        if(open)resize();
+      });
+    }
+  });
+  return renderTrends();
+}
+function closeModal() {
+  const dialog=$('demo-graph-modal');
+  if(!dialog)return;
+  dialog.querySelectorAll('.js-plotly-plot').forEach(element=>window.Plotly.purge(element));
+  dialog.remove();$('demo-backdrop')?.remove();document.body.classList.remove('modal-open');modalFocus?.focus();
+}
+async function openModal(type,ch) {
+  modalFocus=document.activeElement;
+  const dialog=document.createElement('div');dialog.id='demo-graph-modal';dialog.className='modal demo-modal';
+  dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');dialog.setAttribute('aria-labelledby','demo-modal-title');
+  dialog.innerHTML='<div class="modal-dialog modal-xl"><div class="modal-content"><div class="modal-header"><h5 id="demo-modal-title" class="modal-title"></h5><button class="btn-close" type="button" aria-label="Close"></button></div><div class="modal-body"><div class="demo-plot"></div></div><div class="modal-footer"><button type="button" class="btn btn-primary">Close</button></div></div></div>';
+  const backdrop=document.createElement('div');backdrop.id='demo-backdrop';backdrop.className='modal-backdrop show';
+  document.body.append(backdrop,dialog);document.body.classList.add('modal-open');
+  $('demo-modal-title').textContent=`${type==='waveform'?'Waveform':'Spectrum'} - ${bank.gateway} CH${ch}`;
+  dialog.querySelectorAll('button').forEach(button=>button.addEventListener('click',closeModal));
+  dialog.addEventListener('click',event=>{if(event.target===dialog)closeModal();});
+  dialog.addEventListener('keydown',event=>{
+    if(event.key==='Escape')closeModal();
+    if(event.key==='Tab'){
+      const buttons=[...dialog.querySelectorAll('button')];
+      if(event.shiftKey && document.activeElement===buttons[0]){event.preventDefault();buttons.at(-1).focus();}
+      else if(!event.shiftKey && document.activeElement===buttons.at(-1)){event.preventDefault();buttons[0].focus();}
+    }
+  });
+  await plot(dialog.querySelector('.demo-plot'),bank.figures[`${type}:${ch}`]);
+  dialog.querySelector('button').focus();
+}
+async function setupChannelPage(route) {
+  const prefix={'/assets':'asset','/alarms':'rule','/diagnostics':'diag'}[route];
+  if(!prefix)return;
+  options(prefix+'-channel',channelOptions(),channel);
+  $(prefix+'-channel').addEventListener('change',()=>{channel=$(prefix+'-channel').value;update();});
+  if(route==='/alarms') {
+    options('rule-metric',metrics,'Velocity');$('rule-metric').addEventListener('change',update);
+  }
+  if(route==='/diagnostics') {
+    const input=document.querySelector('#diag-orders input');input.disabled=false;input.checked=orders;
+    input.addEventListener('change',()=>{orders=input.checked;update();});
+  }
+  async function update() {
+    const data=bank.channels[channel];
+    if(route==='/assets') {
+      for(const key of ['site','machine','location','direction']) $('asset-'+key).value=data.asset[key];
+      $('asset-interval').value=data.asset.publish_interval;
+    }
+    if(route==='/alarms') {
+      const metric=$('rule-metric').value,metadata=data.metadata[metric];
+      $('rule-context').textContent=`Current settings: ${metadata.unit} | ${metadata.filter} | ${metadata.detection}. Thresholds use the displayed unit.`;
+      $('rule-enabled').checked=channel==='1' && metric==='Velocity';
+      $('rule-alert').value=channel==='1' && metric==='Velocity'?5:6;
+    }
+    if(route==='/diagnostics') {
+      await plot(document.querySelector('#diag-spectrum .demo-plot'),bank.figures[`diagnostics:${channel}:${Number(orders)}`]);
+      await plot(document.querySelector('#diag-waterfall .demo-plot'),bank.figures[`waterfall:${channel}`]);
+    }
+  }
+  await update();
+}
+async function setupHistory() {
+  options('history-gateway-select',[bank.gateway],bank.gateway);
+  options('history-channel-select',['1','2','3','4'],channel);
+  options('history-metric-select',metrics,'Velocity');
+  const load=async()=>{channel=$('history-channel-select').value;await plot(document.querySelector('#history-graph .demo-plot'),bank.figures[`history:${channel}:${$('history-metric-select').value}`]);};
+  $('load-history-btn').disabled=false;$('load-history-btn').onclick=load;
+  $('download-history-csv-btn').disabled=false;
+  $('download-history-csv-btn').onclick=()=>download('vds-synthetic-sample.csv',csv());
+  await load();
+}
+async function navigate() {
+  const version = ++navigationVersion;
+  delete document.body.dataset.demoReady;
+  closeModal();
+  main.querySelectorAll('.js-plotly-plot').forEach(element=>window.Plotly.purge(element));
+  const hash=location.hash.slice(1);
+  const aliases={overview:'/',diagnostics:'/diagnostics',alarms:'/alarms',guide:'/device'};
+  const route=Object.hasOwn(pages,hash)?hash:(Object.hasOwn(aliases,hash)?aliases[hash]:'/');
+  const page=pages[route];
+  main.innerHTML='<div class="alert alert-info demo-notice" role="note"><strong>Public demo · Synthetic data</strong><span>Actual application layout. Captured sample, not live. Changes and service controls are disabled.</span><a href="https://github.com/dineshpalsingh1989/Wilcoxon-VDS">Source & installation ↗</a></div><div class="demo-page"></div><footer class="demo-footer">Viewer preview · No broker, database service, or equipment connection. Example thresholds are not equipment recommendations.</footer>';
+  main.querySelector('.demo-page').innerHTML=page.html;
+  readonly();
+  document.querySelectorAll('#sidebar a').forEach(link=>{
+    const active=link.getAttribute('href')==='#'+route;
+    link.classList.toggle('active',active);active?link.setAttribute('aria-current','page'):link.removeAttribute('aria-current');
+  });
+  const active=document.querySelector('#sidebar [aria-current=page]');
+  document.title=`${active?.textContent.trim() || 'Dashboard'} · VDS public demo`;
+  await Promise.all(Array.from(main.querySelectorAll('[data-demo-plot]')).map(element=>plot(element,page.figures[Number(element.dataset.demoPlot)])));
+  if(version!==navigationVersion)return;
+  if(route==='/')await setupDashboard();
+  await setupChannelPage(route);
+  if(route==='/history')await setupHistory();
+  if($('mqtt-status-bar'))$('mqtt-status-bar').textContent='Sample settings only — no MQTT broker is connected to this public demo.';
+  document.body.dataset.demoReady=route;
+}
+window.addEventListener('hashchange',navigate);
+await navigate();

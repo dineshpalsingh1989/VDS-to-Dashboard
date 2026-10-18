@@ -1,33 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { snapshot, spectrum, events, csv } from '../demo/data.mjs';
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const root=new URL('../',import.meta.url);
+const demo=JSON.parse(await readFile(new URL('demo/snapshots.json',root),'utf8'));
 
-test('normal samples are deterministic and below the illustrative threshold', () => {
-  assert.deepEqual(snapshot('normal', 0), snapshot('normal', 0));
-  assert.equal(snapshot('normal', 0).length, 4);
-  assert(snapshot('normal', 10).every(c => !c.stale && !c.warning));
+test('all 14 application routes and the actual navigation are exported',()=>{
+  assert.equal(Object.keys(demo.pages).length,14);
+  for(const path of Object.keys(demo.pages)) assert(demo.shell.sidebar.includes(`href="${path}"`));
+  assert(demo.shell.header.includes('VDS Condition Monitor'));
+  for(const text of ['CH1','CH2','CH3','CH4','RPM','Real-time Trends','Sensor type:','Sensitivity:']) assert(demo.pages['/'].html.includes(text));
 });
-test('rising scenario affects only the pump drive-end channel', () => {
-  const rising = snapshot('rising', 0), normal = snapshot('normal', 0);
-  assert(rising[0].warning);
-  assert.deepEqual(rising.slice(1), normal.slice(1));
-  assert(spectrum(rising[0], 'rising')[25].value > spectrum(rising[0], 'rising', true)[25].value);
-  assert.equal(events('rising', 0)[0].state, 'Warning');
+test('demo layout and styles match the current application sources',async()=>{
+  for(const [path,hash] of Object.entries(demo.layoutSources)) {
+    const content=(await readFile(new URL(path,root),'utf8')).replaceAll('\r\n','\n');
+    assert.equal(createHash('sha256').update(content).digest('hex'),hash,`Regenerate demo after changing ${path}`);
+  }
+  assert.equal((await readFile(new URL('demo/vendor/dashboard.css',root),'utf8')).replaceAll('\r\n','\n'),
+    (await readFile(new URL('assets/dashboard.css',root),'utf8')).replaceAll('\r\n','\n'));
 });
-test('missing sensor never fabricates readings through the data gap', () => {
-  const channel = snapshot('missing', 6)[2];
-  assert(channel.stale);
-  assert.equal(channel.captureMinute, 54);
-  assert.equal(channel.ageMinutes, 11);
-  assert.equal(channel.value, snapshot('missing', 0)[2].value);
-  assert(channel.history.slice(-11).every(p => p.value === null));
-  assert.equal(channel.history.at(-12).value, channel.value);
-  assert(csv(channel).includes('synthetic_demo'));
-  assert(csv(channel).split('\r\n').at(-2).includes('CH3,,10Hz-1kHz'));
-  assert.equal(events('missing', 6)[0].state, 'Stale');
+test('sample model contains measurement metadata and real plot outputs for each channel',()=>{
+  assert.equal(Object.keys(demo.bank.channels).length,4);
+  for(const [ch,data] of Object.entries(demo.bank.channels)) {
+    assert.equal(data.history.Velocity.length,data.times.length);
+    assert.equal(data.metadata.Velocity.unit,'mm/s');
+    for(const key of [`diagnostics:${ch}:0`,`diagnostics:${ch}:1`,`waterfall:${ch}`,`waveform:${ch}`,`history:${ch}:Velocity`]) {
+      assert(demo.bank.figures[key].data.length>0,key);
+    }
+  }
 });
-test('invalid replay state is rejected', () => {
-  assert.throws(() => snapshot('unexpected', 0));
-  assert.throws(() => snapshot('toString', 0));
-  assert.throws(() => snapshot('normal', -1));
+test('export contains synthetic identities and no live scripts or loading markers',()=>{
+  assert.equal(demo.bank.gateway,'VDS-DEMO-01');
+  for(const page of Object.values(demo.pages)) {
+    assert(!page.html.includes('<script'));
+    assert(!page.html.includes('data-dash-is-loading'));
+    assert(!page.html.includes('C:\\Users\\'));
+  }
 });

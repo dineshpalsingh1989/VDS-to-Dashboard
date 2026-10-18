@@ -1,128 +1,82 @@
-// Dependency-free browser check. Uses installed Chrome and Node 24's WebSocket.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, writeFile, rm, readdir } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile, writeFile, readdir } from 'node:fs/promises';
+import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openBrowser, wait } from './demo-browser.mjs';
 
-const root = fileURLToPath(new URL('../demo/', import.meta.url));
-const types = { 'index.html': 'text/html', 'demo.css': 'text/css', 'app.mjs': 'text/javascript', 'data.mjs': 'text/javascript' };
-const prefix = '/Wilcoxon-VDS/';
-const server = createServer(async (request, response) => {
-  const pathname = new URL(request.url, 'http://localhost').pathname;
-  const name = pathname === prefix ? 'index.html' : pathname.slice(prefix.length);
-  if (!pathname.startsWith(prefix) || !types[name]) { response.writeHead(404).end(); return; }
-  try { response.writeHead(200, {'Content-Type': types[name]}); response.end(await readFile(join(root, name))); }
-  catch { response.writeHead(500).end(); }
+const root=fileURLToPath(new URL('../demo/',import.meta.url));
+const prefix='/Wilcoxon-VDS/';
+const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.json':'application/json','.css':'text/css','.woff2':'font/woff2','.ttf':'font/ttf'};
+const server=createServer(async(request,response)=>{
+  const pathname=new URL(request.url,'http://localhost').pathname;
+  if(!pathname.startsWith(prefix)){response.writeHead(404).end();return;}
+  const path=resolve(root,decodeURIComponent(pathname.slice(prefix.length))||'index.html');
+  if(!path.startsWith(resolve(root)+sep)){response.writeHead(404).end();return;}
+  try{const content=await readFile(path);response.writeHead(200,{'Content-Type':types[extname(path)]||'application/octet-stream'});response.end(content);}
+  catch{response.writeHead(404).end();}
 });
-await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const url = `http://127.0.0.1:${server.address().port}${prefix}`;
-const profile = await mkdtemp(join(tmpdir(), 'vds-demo-browser-'));
-const browserPath = process.env.DEMO_BROWSER || (process.platform === 'win32' ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe' : 'google-chrome');
-const args = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-extensions', '--disable-sync', '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'];
-if (process.env.CI) args.unshift('--no-sandbox');
-const browser = spawn(browserPath, args, {stdio:'ignore', windowsHide:true});
-let launchError;
-browser.on('error', error => { launchError = error; });
-const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-let socket;
+await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+const url=process.env.DEMO_URL || `http://127.0.0.1:${server.address().port}${prefix}`;
+let browser;
 try {
-  let port;
-  for (let i=0;i<100;i++) {
-    if (launchError) throw launchError;
-    try { port = (await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break; }
-    catch { await wait(200); }
-  }
-  assert(port, 'Chrome did not start');
-  const pages = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
-  socket = new WebSocket(pages.find(page => page.type === 'page').webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, {once:true}); socket.addEventListener('error', reject, {once:true}); });
-  let sequence=0;
-  const pending = new Map(), errors=[];
-  socket.addEventListener('message', event => {
-    const message = JSON.parse(event.data);
-    if (message.method === 'Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text);
-    if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error' && !message.params.entry.text.includes('favicon.ico')) errors.push(message.params.entry.text);
-    if (pending.has(message.id)) {
-      const {resolve,reject,timer} = pending.get(message.id); clearTimeout(timer); pending.delete(message.id);
-      message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result);
-    }
-  });
-  function call(method, params={}) {
-    return new Promise((resolve,reject) => {
-      const id=++sequence;
-      const timer=setTimeout(() => { pending.delete(id); reject(new Error(`Timed out: ${method}`)); },10000);
-      pending.set(id,{resolve,reject,timer}); socket.send(JSON.stringify({id,method,params}));
-    });
-  }
-  async function evaluate(expression) {
-    const result = await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
-    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
-    return result.result.value;
-  }
-  await call('Page.enable'); await call('Runtime.enable'); await call('Log.enable');
-  await call('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
-  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:1100,deviceScaleFactor:1,mobile:false});
+  browser=await openBrowser();
+  const {call,evaluate,until}=browser;
   await call('Page.navigate',{url});
-  let ready=false;
-  for(let i=0;i<60;i++) { if(await evaluate('document.querySelectorAll(".channel-card").length === 4')) {ready=true;break;} await wait(100); }
-  assert(ready,'Four channel cards must render');
-  assert.equal(await evaluate('document.querySelector("#asset-condition").textContent'),'Normal');
-  assert.equal(await evaluate('document.querySelector("#pause").textContent'),'Resume replay');
-  await evaluate('document.querySelector("#scenario").value="rising";document.querySelector("#scenario").dispatchEvent(new Event("change"))');
-  assert.equal(await evaluate('document.querySelector("#asset-condition").textContent'),'Warning');
-  assert.equal(await evaluate('document.querySelectorAll(".channel-card .warning").length'),1);
+  await until('document.body.dataset.demoReady === "/"');
+  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
+  assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS Condition Monitor');
+  assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std Deviation:'));
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
   if(process.env.DEMO_SCREENSHOT) {
-    const shot=await call('Page.captureScreenshot',{format:'png'});
-    await writeFile(process.env.DEMO_SCREENSHOT,Buffer.from(shot.data,'base64'));
+    const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+    await writeFile(process.env.DEMO_SCREENSHOT,Buffer.from(image.data,'base64'));
   }
-  await evaluate('document.querySelectorAll(".channel-card")[1].click()');
-  assert((await evaluate('document.querySelector("#trend-title").textContent')).startsWith('CH2'));
-  await evaluate('document.querySelector("#window").value="15";document.querySelector("#window").dispatchEvent(new Event("change"))');
-  assert((await evaluate('document.querySelector("#trend-chart svg").outerHTML')).includes('12:45'));
-  await evaluate('location.hash="diagnostics"'); await wait(100);
-  assert.equal(await evaluate('document.querySelector("[data-panel=diagnostics]").hidden'),false);
-  await evaluate('document.querySelector("#orders").click()');
-  assert((await evaluate('document.querySelector("#spectrum-chart").textContent')).includes('Order'));
-  const withBaseline=await evaluate('document.querySelectorAll("#spectrum-chart path").length');
-  await evaluate('document.querySelector("#baseline").click()');
-  assert.equal(await evaluate('document.querySelectorAll("#spectrum-chart path").length'),withBaseline-1);
-  await evaluate('document.querySelector("#scenario").value="missing";document.querySelector("#scenario").dispatchEvent(new Event("change"));document.querySelector("#diag-channel").value="3";document.querySelector("#diag-channel").dispatchEvent(new Event("change"))');
-  assert.equal(await evaluate('document.querySelector("#asset-condition").textContent'),'Data incomplete');
-  assert.equal(await evaluate('document.querySelector("#reporting").textContent.trim()'),'3 / 4');
-  assert((await evaluate('document.querySelector("#spectrum-chart svg").getAttribute("aria-label")')).includes('last known'));
-  await evaluate('document.querySelector("#pause").click()');
-  await wait(3200);
-  await evaluate('document.querySelector("#pause").click()');
-  assert(await evaluate('Number(document.querySelectorAll(".channel-card")[2].textContent.match(/Last: ([0-9]+)/)[1]) >= 6'));
-  await evaluate('location.hash="alarms"'); await wait(100);
-  assert((await evaluate('document.querySelector("#event-rows").textContent')).includes('Stale'));
-  await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:profile});
-  await evaluate('location.hash="overview"'); await wait(100);
-  await evaluate('document.querySelector("#export").click()');
+  // Real dashboard trend switches and metric selectors remain exploratory.
+  await evaluate(`Array.from(document.querySelectorAll('input')).find(el=>{try{const id=JSON.parse(el.id);return id.type==='ch-trend-check'&&id.channel==='2'}catch{return false}}).click()`);
+  await until(`Boolean(document.querySelector('[data-trend-channel="2"] .js-plotly-plot'))`);
+  await evaluate(`const select=document.querySelector('[data-trend-channel="2"] select');select.value='Acceleration';select.dispatchEvent(new Event('change'))`);
+  await until(`document.querySelector('[data-trend-channel="2"] .js-plotly-plot')?.layout?.title?.text === 'CH2 - Acceleration'`);
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(el=>{try{return JSON.parse(el.id).type==='ch-wf-btn'}catch{return false}}).click()`);
+  await until('Boolean(document.querySelector("#demo-graph-modal .js-plotly-plot"))');
+  assert((await evaluate('document.querySelector("#demo-modal-title").textContent')).includes('Waveform'));
+  await evaluate('document.querySelector("#demo-graph-modal .btn-close").click()');
+  assert.equal(await evaluate('Boolean(document.querySelector("#demo-graph-modal"))'),false);
+  const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
+  async function navigate(route) {
+    await evaluate(`location.hash=${JSON.stringify(route)}`);
+    await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`);
+  }
+  for(const route of routes)await navigate(route);
+  for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch']]) {
+    await navigate(route);assert(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`),id+' must be disabled');
+  }
+  await navigate('/diagnostics');
+  await evaluate('document.querySelector("#diag-channel").value="2";document.querySelector("#diag-channel").dispatchEvent(new Event("change"))');
+  await evaluate('document.querySelector("#diag-orders input").click()');
+  await until('document.querySelector("#diag-spectrum .js-plotly-plot")?.layout?.xaxis?.title?.text?.startsWith("Order")');
+  await navigate('/assets');
+  assert.equal(await evaluate('document.querySelector("#asset-direction").value'),'Vertical');
+  await navigate('/history');
+  await call('Browser.setDownloadBehavior',{behavior:'allow',downloadPath:browser.profile});
+  await evaluate('document.querySelector("#download-history-csv-btn").click()');
   let download;
-  for(let i=0;i<40;i++) { download=(await readdir(profile)).find(file => file.endsWith('.csv'));if(download)break;await wait(100); }
+  for(let i=0;i<40;i++){download=(await readdir(browser.profile)).find(file=>file.endsWith('.csv'));if(download)break;await wait(100);}
   assert(download,'CSV download must complete');
-  assert((await readFile(join(profile,download),'utf8')).includes('synthetic_demo'));
-  await evaluate('document.querySelector("#reset").click()');
-  assert.equal(await evaluate('document.querySelector("#asset-condition").textContent'),'Normal');
-  await evaluate('document.querySelector("#pause").click()');
-  assert.equal(await evaluate('document.querySelector("#pause").textContent'),'Pause replay');
-  await evaluate('document.querySelector("#pause").click()');
+  assert((await readFile(resolve(browser.profile,download),'utf8')).includes('synthetic_demo'));
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
-  for(const view of ['overview','diagnostics','alarms','guide']) {
-    await evaluate(`location.hash=${JSON.stringify(view)}`); await wait(100);
-    assert(await evaluate('document.documentElement.scrollWidth <= 390'),`No horizontal page overflow in ${view}`);
+  await evaluate('document.body.classList.add("demo-nav-hidden")');
+  for(const route of ['/',...routes]) {
+    await navigate(route);
+    assert(await evaluate('document.documentElement.scrollWidth <= 390'),`No horizontal page overflow: ${route}`);
   }
-  await evaluate('location.hash="toString"'); await wait(100);
-  assert.equal(await evaluate('document.querySelector("#page-title").textContent'),'Pump overview');
-  assert.deepEqual(errors,[], 'No browser runtime or CSP errors');
-  console.log('Browser passed: scenarios, channels, history, spectrum, routes, CSV, replay controls, and four mobile views.');
-  await call('Browser.close');
+  if(process.env.DEMO_MOBILE_SCREENSHOT) {
+    await navigate('/');
+    const image=await call('Page.captureScreenshot',{format:'png'});
+    await writeFile(process.env.DEMO_MOBILE_SCREENSHOT,Buffer.from(image.data,'base64'));
+  }
+  assert.deepEqual(browser.errors,[],'No browser errors or CSP violations');
+  console.log('Passed: actual layout, 14 routes, trend switches, metric selection, waveform dialog, order axis, CSV, disabled actions, and mobile views.');
 } finally {
-  socket?.close(); browser.kill();
-  await new Promise(resolve => server.close(resolve));
-  await rm(profile,{recursive:true,force:true,maxRetries:8,retryDelay:200});
+  await browser?.close();await new Promise(resolve=>server.close(resolve));
 }
