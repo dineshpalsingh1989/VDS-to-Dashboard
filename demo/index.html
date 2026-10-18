@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore the Wilcoxon VDS Condition Monitor with a public, interactive sample-data demo. No installation or login required.">
+  <meta name="theme-color" content="#112b46">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Interactive demo · Wilcoxon VDS</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='10' fill='%23087f8c'/%3E%3Cpath d='M7 21h6l3-10 7 20 4-10h6' fill='none' stroke='white' stroke-width='2.5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="demo.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to dashboard</a>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="Wilcoxon VDS demo home">
+      <svg viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="11" fill="#20b6bd"/><path d="M7 21h6l3-10 7 20 4-10h6" fill="none" stroke="white" stroke-width="2.5" stroke-linejoin="round"/></svg>
+      <span>WILCOXON <b>VDS Condition Monitor</b></span>
+    </a>
+    <div class="nav-label">EXAMPLE WORKSPACE</div>
+    <nav aria-label="Demo views">
+      <a href="#overview" data-view="overview" aria-current="page"><span aria-hidden="true">▦</span> Overview</a>
+      <a href="#diagnostics" data-view="diagnostics"><span aria-hidden="true">∿</span> Vibration diagnostics</a>
+      <a href="#alarms" data-view="alarms"><span aria-hidden="true">◷</span> Alarm events</a>
+      <a href="#guide" data-view="guide"><span aria-hidden="true">ⓘ</span> How it works</a>
+    </nav>
+    <div class="sidebar-note"><span class="demo-tag">PUBLIC DEMO</span><p>Explore a sample pump.<br>All measurements are synthetic.</p><a href="https://github.com/dineshpalsingh1989/Wilcoxon-VDS">View source on GitHub ↗</a></div>
+  </aside>
+  <main id="main" tabindex="-1">
+    <header class="topbar"><span>Example site <span class="slash">/</span> Pump room <span class="slash">/</span> <strong>P-101</strong></span><a href="https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest">Download the full app ↗</a></header>
+    <div class="content">
+      <div class="demo-notice"><strong>Interactive sample-data demo</strong><span>Explore freely. No login, hardware connection, or installation required.</span></div>
+      <div class="page-heading"><div><p class="eyebrow">ASSET CONDITION / P-101</p><h1 id="page-title">Pump overview</h1><p class="subtitle">Four measurement points. One view of your machine.</p></div><div class="asset-tag"><span class="dot"></span> VDS-DEMO · 4 channels</div></div>
+      <section class="controls" aria-label="Sample replay controls">
+        <label for="scenario">Sample scenario <select id="scenario"><option value="normal">Normal operation</option><option value="rising">Rising vibration</option><option value="missing">Missing sensor</option></select></label>
+        <div class="replay"><span id="replay-status" class="replay-label">Sample replay running</span><button id="pause" type="button">Pause replay</button><button id="reset" class="quiet" type="button">Reset</button></div>
+      </section>
+      <div id="scenario-description" class="scenario-description" role="status"></div>
+
+      <section data-panel="overview" aria-label="Pump overview">
+        <div class="summary-grid">
+          <article class="summary"><span>Asset condition</span><strong id="asset-condition">Normal</strong><small id="condition-detail">Within example thresholds</small></article>
+          <article class="summary"><span>Reporting channels</span><strong id="reporting">4 <em>/ 4</em></strong><small>Synthetic measurement points</small></article>
+          <article class="summary"><span>Running speed</span><strong>1,480 <em>rpm</em></strong><small>24.67 Hz · example operating speed</small></article>
+          <article class="summary"><span>Sample capture</span><strong id="capture-time">12:00:00</strong><small>Relative replay time · UTC</small></article>
+        </div>
+        <div class="section-heading"><h2>Measurement points</h2><span>Select a channel to explore its trend</span></div>
+        <div id="channels" class="channel-grid" role="group" aria-label="Measurement points"></div>
+        <article class="panel trend-panel"><div class="panel-heading"><div><h2 id="trend-title">Velocity trend</h2><p>RMS · 10 Hz–1 kHz · mm/s</p></div><label class="compact" for="window">History <select id="window"><option value="60">60 minutes</option><option value="30">30 minutes</option><option value="15">15 minutes</option></select></label></div><div id="trend-chart" class="chart"></div><div class="legend"><span><i class="teal"></i>Selected channel</span><span><i class="amber"></i>Example warning: 4.5 mm/s</span><button id="export" class="text-button" type="button">Download sample CSV ↓</button></div></article>
+      </section>
+
+      <section data-panel="diagnostics" aria-label="Vibration diagnostics" hidden>
+        <article class="panel"><div class="panel-heading"><div><h2>Current spectrum & saved baseline</h2><p>Illustrative frequency components; this demo does not diagnose faults.</p></div><label class="compact" for="diag-channel">Channel <select id="diag-channel"></select></label></div><div class="plot-controls"><label><input type="checkbox" id="baseline" checked> Show example baseline</label><label><input type="checkbox" id="orders"> Use order axis</label></div><div id="spectrum-chart" class="chart"></div><div class="legend"><span><i class="teal"></i>Sample spectrum</span><span><i class="grey"></i>Example baseline</span><span>1× = 24.67 Hz at 1,480 rpm</span></div></article>
+        <div class="detail-grid"><article class="panel explainer"><h2>Keep the measurement context</h2><p>The full application retains units, filters, detection methods, capture times, and spectrum settings so comparisons can be checked.</p><dl><dt>Sensor</dt><dd>Example IEPE · 100 mV/g</dd><dt>Spectrum</dt><dd>0–500 Hz · 1 Hz spacing</dd><dt>Amplitude</dt><dd>g · illustrative values</dd></dl></article><article class="panel explainer"><h2>From a reading to a decision</h2><p>Review comparable captures at similar operating conditions. The full app includes spectrum overlays, RPM harmonics, an order axis, and recorded spectrum waterfalls.</p><p class="muted">The charts here are generated in your browser from a deterministic sample model.</p></article></div>
+      </section>
+
+      <section data-panel="alarms" aria-label="Example alarm events" hidden>
+        <article class="panel"><div class="panel-heading"><div><h2>Example event history</h2><p>Illustrative transitions for the selected scenario.</p></div><span class="pill">Viewer access</span></div><div class="table-scroll"><table><caption class="sr-only">Sample alarm events</caption><thead><tr><th>Replay time (UTC)</th><th>Point</th><th>State</th><th>Finding</th></tr></thead><tbody id="event-rows"></tbody></table></div><p class="table-note">These are scripted sample events, not the output of the application's alarm engine. Example thresholds are not equipment recommendations.</p></article>
+        <article class="panel explainer"><h2>Operator workflow in the full app</h2><p>Administrators configure thresholds, persistence, and hysteresis, then review and acknowledge recorded events. Viewers can inspect permitted views. This public demo provides exploration controls only.</p></article>
+      </section>
+
+      <section data-panel="guide" aria-label="How it works" hidden>
+        <article class="panel explainer"><p class="eyebrow">FROM SENSOR TO BROWSER</p><h2>Explore here. Run with your own data locally.</h2><div class="flow" aria-label="Data flow"><span>VDS130<br><small>Measurements</small></span><b aria-hidden="true">→</b><span>MQTT broker<br><small>Your network</small></span><b aria-hidden="true">→</b><span>Condition Monitor<br><small>Python + SQLite</small></span><b aria-hidden="true">→</b><span>Dashboard<br><small>Your browser</small></span></div><p>The full application ingests MQTT messages, stores measurement history in SQLite, and exposes a browser dashboard. Optional Modbus TCP and OPC UA services share selected values and quality with other systems.</p><p>This GitHub Pages demo is a separate browser-only preview. It uses synthetic data and has no broker, database, or equipment connection.</p><a class="primary-link" href="https://github.com/dineshpalsingh1989/Wilcoxon-VDS#download-and-run-on-linux">Get the Linux installation instructions ↗</a></article>
+        <div class="detail-grid"><article class="panel explainer"><h2>Try these three things</h2><ol><li>Choose <strong>Rising vibration</strong> and inspect the pump drive-end channel.</li><li>Open <strong>Vibration diagnostics</strong> and switch between Hz and orders.</li><li>Choose <strong>Missing sensor</strong> to see a stale measurement separated from reporting channels.</li></ol></article><article class="panel explainer"><h2>About the monitoring agents</h2><p>The full app has six advisory checks covering connectivity, sensor freshness, data quality, storage, baseline changes, and a health summary.</p><p>This demo presents sample scenarios; it does not execute those checks or introduce changes to the agent code.</p></article></div>
+      </section>
+      <footer><span>Wilcoxon VDS Condition Monitor · Community project · Synthetic data only</span><a href="https://github.com/dineshpalsingh1989/Wilcoxon-VDS">Documentation & source ↗</a></footer>
+      <noscript><p class="demo-notice">Enable JavaScript to explore the interactive demo. Installation instructions and screenshots are available in the GitHub README.</p></noscript>
+    </div>
+  </main>
+</body>
+</html>

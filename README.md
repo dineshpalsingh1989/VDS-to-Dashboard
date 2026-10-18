@@ -3,6 +3,13 @@
 [![GitHub checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
 [Download for Linux](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/archive/refs/heads/main.zip)
 
+**[Open the interactive dashboard demo →](https://dineshpalsingh1989.github.io/Wilcoxon-VDS/)**
+
+Try the dashboard in your browser with no installation or login. Select a channel,
+explore velocity trends and spectra, switch between normal/rising/missing-sensor
+scenarios, and download sample CSV data. All measurements and events are synthetic.
+The public demo is a separate preview; it never connects to equipment or your database.
+
 MQTT ingestion, a SQLite historian, measurement-aware alarms, diagnostic plots,
 and advisory health agents for Wilcoxon VDS130 data. The dashboard also exposes
 selected values and data quality through Modbus TCP and OPC UA.
@@ -139,6 +146,21 @@ backups, and retention run in a separate maintenance task. `AGENTS.md` contains
 development instructions for coding assistants; it does not start runtime agents.
 
 ## Run locally
+
+### Preview the public demo locally
+
+The browser-only demo needs no Python packages or Docker:
+
+```bash
+python -m http.server 8080 --directory demo --bind 127.0.0.1
+```
+
+Open **http://127.0.0.1:8080**. Source files are in `demo/`. The
+[demo workflow](.github/workflows/demo.yml) checks the sample model and Chrome
+interactions, then publishes only that folder to GitHub Pages on changes to main.
+Repository Pages settings must use **GitHub Actions** as the publishing source.
+
+### Run the full application
 
 For development without Docker, install Python 3.14. On Linux:
 

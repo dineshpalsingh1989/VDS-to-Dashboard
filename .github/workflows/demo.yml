@@ -1,0 +1,50 @@
+name: Public dashboard demo
+on:
+  push:
+    branches: [main]
+    paths: ['demo/**', 'tests/demo-*.mjs', 'scripts/demo-smoke.mjs', '.github/workflows/demo.yml']
+  pull_request:
+    paths: ['demo/**', 'tests/demo-*.mjs', 'scripts/demo-smoke.mjs', '.github/workflows/demo.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: public-demo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check sample data and browser interactions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --check demo/app.mjs
+      - run: node --test tests/demo-data.mjs
+      - name: Browser smoke test
+        run: node scripts/demo-smoke.mjs
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: demo
+      - uses: actions/deploy-pages@v4
+        id: deployment
