@@ -19,8 +19,8 @@ For a remote host, use `ssh -L 8050:127.0.0.1:8050 user@linux-host` and open the
 address on your own computer.
 
 The `--build` path works from this public download without registry credentials.
-After the container package is public, `bash scripts/linux-start.sh --image` can
-pull the prebuilt image instead. Images target Linux AMD64 and ARM64 (64-bit).
+The container package is public: `bash scripts/linux-start.sh --image` pulls the
+prebuilt image without a GitHub login. Images target Linux AMD64 and ARM64 (64-bit).
 
 Features include asset/channel mapping, contextual measurements, continuous
 scalar history, recording jobs, alarms and acknowledgments, diagnostic plots,
@@ -31,6 +31,4 @@ Automated checks cover Python syntax, dependency compatibility, tests, Linux
 launcher syntax, container startup, HTTP routes, and verified backup creation.
 These software checks do not replace commissioning with actual VDS/PLC hardware.
 
-Package owners: a new GitHub Container Registry package is private by default.
-Set package visibility to Public in GitHub Packages settings to allow anonymous
-pulls. This does not affect public source downloads or the `--build` launcher.
+Container package: https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds

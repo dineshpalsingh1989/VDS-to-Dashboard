@@ -34,7 +34,7 @@ extract it, and run `bash scripts/linux-start.sh --build` inside its folder.
 
 ### Run the prebuilt container package
 
-Once the package is public, use the same extracted folder with:
+The published package allows anonymous downloads. Use the same extracted folder with:
 
 ```bash
 bash scripts/linux-start.sh --image
@@ -42,9 +42,8 @@ bash scripts/linux-start.sh --image
 
 This pulls `ghcr.io/dineshpalsingh1989/wilcoxon-vds:latest` instead of building.
 Set `VDS_IMAGE=ghcr.io/dineshpalsingh1989/wilcoxon-vds:1.1.0` in `.env` to pin a
-release. If the registry requires authentication, the source `--build` path works
-without a GitHub login. Maintainers must make a newly published container package
-Public in its GitHub package settings before anonymous users can pull it.
+release. No GitHub login is required. If an image download is unavailable, use
+`--build` to build from the public source instead.
 
 Stop with `docker compose down`. For image-only installs, use
 `docker compose -f compose.image.yaml down`. Keep the named volume to retain
@@ -328,10 +327,9 @@ runs on pushes to `main`, pull requests, version tags, and manual requests:
 - Publish AMD64/ARM64 container packages only after checks pass, outside pull requests.
 - On a `v*` tag, publish a Linux source bundle and SHA-256 checksums as a GitHub Release.
 
-GitHub creates an initial container package as private. Its owner can open
-[package settings](https://github.com/users/dineshpalsingh1989/packages/container/wilcoxon-vds/settings)
-and change visibility to Public. Public release downloads and local source builds
-are available independently of that setting. Checks exercise software behavior;
+The published AMD64 and ARM64 images have been verified to allow anonymous pulls.
+Maintainers publishing a fork should check its package visibility separately;
+GitHub can create new packages as private. Checks exercise software behavior;
 commissioning against real VDS hardware is still required for a new installation.
 
 Modules: vds.py normalizes measurements; historian.py persists context, rules,
