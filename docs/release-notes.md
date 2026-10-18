@@ -1,13 +1,13 @@
 ## Linux download and container distribution
 
-Download the `wilcoxon-vds-*-linux.tar.gz` asset and `SHA256SUMS` below.
+Download the `wilcoxon-vds-linux.tar.gz` asset and `SHA256SUMS` below.
 The archive contains the application source, documentation, and Docker launchers.
 Docker Engine with the Docker Compose plugin is required; Python is bundled in
 the container and does not need to be installed on the Linux host.
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf wilcoxon-vds-*-linux.tar.gz
+tar -xzf wilcoxon-vds-linux.tar.gz
 cd wilcoxon-vds
 bash scripts/linux-start.sh --build
 ```

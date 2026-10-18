@@ -1,6 +1,8 @@
 .git
 .venv
 .uv-cache
+.review
+.ruff_cache
 __pycache__
 **/__pycache__
 device_data
