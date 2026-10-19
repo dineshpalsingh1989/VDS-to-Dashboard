@@ -127,7 +127,7 @@ acquisition details and waveform, inspect the strongest peaks, or click a spectr
 point for frequency, amplitude, and order. Enter Manual RPM when needed. The
 screenshot shows the updated order view with a display-only 1200 RPM override.
 
-![Updated diagnostics with recorded capture selection, manual RPM, acquisition details, waveform, spectrum, peak readings, and waterfall](docs/images/diagnostics.png)
+![Updated diagnostics with recorded capture selection, manual RPM, acquisition details, waveform, spectrum, peak readings, and waterfall](docs/images/diagnostics-v2.png)
 
 ### 4. Review health and export results
 

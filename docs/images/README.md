@@ -10,7 +10,7 @@ credentials are included.
 | dashboard.png | Four channel cards, RPM, measurement metadata, and a trend |
 | asset-registry.png | Machine, bearing, direction, and publishing-interval configuration |
 | alarm-management.png | Measurement-aware rule configuration and a warning event |
-| diagnostics.png | Updated viewer diagnostics: capture selector, manual RPM, acquisition details, waveform, order spectrum, peaks, and waterfall |
+| diagnostics-v2.png | Updated viewer diagnostics: capture selector, manual RPM, acquisition details, waveform, order spectrum, peaks, and waterfall |
 
 The demonstration uses 1440 RPM and synthetic spectral components. The diagnostics
 screenshot shows a display-only manual override of 1200 RPM in the public viewer. The plotted
