@@ -15,3 +15,7 @@ credentials are included.
 The demonstration uses 1440 RPM and synthetic spectral components. The diagnostics
 screenshot shows a display-only manual override of 1200 RPM in the public viewer. The plotted
 values and alarm thresholds do not constitute machine-health recommendations.
+
+## Hardware photo
+
+`wilcoxon-vds130.jpg` is a Wilcoxon product photo sourced from [Instrumart](https://www.instrumart.com/products/824094/wilcoxon-sensing-technologies-vds130-iepe-to-mqtt-vibration-data-monitor). It is stored locally so the README does not depend on external image access. This product photo is separate from the synthetic dashboard screenshots above.

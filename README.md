@@ -77,17 +77,8 @@ Click any screenshot to view it at full size.
 ## How it works
 
 <p align="center">
-  <a href="https://wilcoxon.com/newproducts/vds130-iepe-to-mqtt-vibration-data-source/">
-    <img src="https://wilcoxon.com/wp-content/uploads/2026/01/VDS100-vibration-data-source.png" alt="Wilcoxon vibration data source with CH1?CH4 vibration inputs and an RPM input" width="420">
-  </a>
+  <img src="docs/images/wilcoxon-vds130.jpg" alt="Wilcoxon VDS130 vibration data source" width="420">
 </p>
-
-**From machine vibration to the dashboard.** Connect up to four IEPE vibration
-sensors to the VDS130, with an optional tachometer for RPM. The VDS130 publishes
-vibration measurements, waveforms, and spectra to your MQTT broker. This
-application receives those messages for monitoring, recording, and analysis.
-
-Hardware photo and device information: [Wilcoxon Sensing Technologies](https://wilcoxon.com/newproducts/vds130-iepe-to-mqtt-vibration-data-source/).
 
 ```mermaid
 flowchart LR
