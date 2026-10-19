@@ -12,7 +12,7 @@ from flask import request
 import dash_bootstrap_components as dbc
 
 import historian
-from diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture
+from diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture, display_rpm
 from vds import spectrum_xy
 
 READ_CALLBACKS = {
@@ -170,13 +170,13 @@ def diagnostics_page():
             html.Small("Latest 100 recorded timestamps. Selected captures compare against the saved channel baseline. Waveform and spectrum are paired only when their timestamps match.", className="text-muted d-block mb-3"),
             dbc.Checklist(
                 id="diag-orders",
-                options=[{"label": "Order axis (requires RPM)", "value": "orders"}],
+                options=[{"label": "Order axis (uses RPM)", "value": "orders"}],
                 value=[],
             ),
             dbc.Label("Manual RPM (optional)", html_for="diag-rpm"),
             dbc.Input(id="diag-rpm", type="number", min=0, step="any",
                       placeholder="Enter RPM if unavailable, or override for this plot"),
-            html.Small("Leave blank to use capture RPM. Manual RPM affects only the spectrum and baseline display; the waterfall stays in Hz.", className="text-muted d-block mb-3"),
+            html.Small("Live view uses dashboard RPM automatically. If RPM is missing or incorrect, enter a positive Manual RPM. Recorded captures use capture RPM. Manual RPM changes only the spectrum and baseline display; the waterfall stays in Hz.", className="text-muted d-block mb-3"),
             dbc.Button(
                 "Capture current baseline",
                 id="baseline-save",
@@ -550,7 +550,8 @@ def register(app, get_connection, get_snapshot, apply_asset):
             gid, ch = split_channel(value)
             current = current_spectrum(gid, ch)
             notices = []
-            data = get_snapshot().get(gid, {}).get("channels", {}).get(ch, {})
+            device = get_snapshot().get(gid, {})
+            data = device.get("channels", {}).get(ch, {})
             wave = dict(data.get("waveform_context", {}), waveform_data=data.get("waveform_data", []))
             with closing(get_connection()) as conn:
                 if capture and capture != "live":
@@ -563,6 +564,10 @@ def register(app, get_connection, get_snapshot, apply_asset):
                     "SELECT timestamp,spectrum_data,context FROM raw_spectrum WHERE gateway_id=? AND channel=? AND context IS NOT NULL ORDER BY timestamp DESC LIMIT 50",
                     (gid, ch),
                 ).fetchall()
+            live = not capture or capture == "live"
+            current = display_rpm(current, device.get("rpm"), live)
+            if current.get("rpm") is None and manual_rpm is None:
+                notices.append("RPM is missing or invalid. Enter a positive Manual RPM to use the order axis.")
             details = [html.Div([html.H6(kind), html.Dl([
                 html.Div([html.Dt(key), html.Dd(str(val))])
                 for key, val in capture_details(item, kind, speed).items() if key != "Plot"

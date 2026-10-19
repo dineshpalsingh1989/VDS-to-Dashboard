@@ -32,6 +32,7 @@ try {
     const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
     await writeFile(process.env.DEMO_SCREENSHOT,Buffer.from(image.data,'base64'));
   }
+  assert.equal(await evaluate('document.querySelectorAll("#device-accordion .fa-chevron-up, #device-accordion .fa-chevron-down").length'),0,'Use only the native accordion arrow');
   // Real dashboard trend switches and metric selectors remain exploratory.
   await evaluate(`Array.from(document.querySelectorAll('input')).find(el=>{try{const id=JSON.parse(el.id);return id.type==='ch-trend-check'&&id.channel==='2'}catch{return false}}).click()`);
   await until(`Boolean(document.querySelector('[data-trend-channel="2"] .js-plotly-plot'))`);
@@ -53,6 +54,7 @@ try {
     await navigate(route);assert(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`),id+' must be disabled');
   }
   await navigate('/diagnostics');
+  assert((await evaluate('document.querySelector("#diag-details").textContent')).includes('Dashboard'));
   await evaluate('document.querySelector("#diag-channel").value="2";document.querySelector("#diag-channel").dispatchEvent(new Event("change"))');
   await evaluate('document.querySelector("#diag-orders input").click()');
   await until('document.querySelector("#diag-spectrum .js-plotly-plot")?.layout?.xaxis?.title?.text?.startsWith("Order")');

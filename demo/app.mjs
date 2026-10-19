@@ -212,7 +212,8 @@ async function renderDiagnostics(data) {
   options('diag-capture',[{label:'Live / latest sample',value:'live'},
     ...captures.map((item,i)=>({label:new Date(item.timestamp_ms).toISOString(),value:String(i)})).reverse()],captureChoice);
   const current=captures[captureChoice==='live'?captures.length-1:Number(captureChoice)];
-  const speed=manualRpm===''?current.rpm:Number(manualRpm);
+  const automatic=captureChoice==='live'?bank.rpm:current.rpm;
+  const speed=manualRpm===''?automatic:Number(manualRpm);
   const validManual=manualRpm==='' || (Number.isFinite(speed) && speed>0);
   const notices=[];
   $('diag-cursor').textContent='Click a spectrum point to inspect frequency, amplitude, and order.';
@@ -225,7 +226,7 @@ async function renderDiagnostics(data) {
       'Amplitude':kind==='Spectrum'?'Device units':'Sensor units',
       'Sampling rate':`${item.sampling_freq} Hz`,
       'RPM':kind==='Spectrum'?(speed??'Unavailable'):(item.rpm??'Unavailable'),
-      'RPM source':kind==='Spectrum' && manualRpm!==''?'Manual override':'Capture'};
+      'RPM source':kind==='Spectrum' && manualRpm!==''?'Manual override':kind==='Spectrum' && captureChoice==='live'?'Dashboard':'Capture'};
     if(kind==='Spectrum')Object.assign(values,{'Frequency resolution':`${item.bandwidth/item.lines} Hz`,'Bandwidth':`${item.bandwidth} Hz`,'FFT window':item.window||'Unknown'});
     for(const [key,value] of Object.entries(values)) {
       const row=document.createElement('div'),dt=document.createElement('dt'),dd=document.createElement('dd');
@@ -244,7 +245,7 @@ async function renderDiagnostics(data) {
   } else {
     const fig=clone(bank.figures[`diagnostics:${channel}:0`]);
     fig.data=[current,data.baseline].map((item,index)=>{
-      const rpm=manualRpm===''?item.rpm:speed;
+      const rpm=manualRpm===''?(index?item.rpm:speed):speed;
       const hz=item.spectrum_data.map((_,i)=>i*item.bandwidth/item.lines);
       return {name:index?'Baseline':'Current',mode:'lines',type:'scatter',line:index?{dash:'dot'}:{},
         x:hz.map(v=>orders?v/(rpm/60):v),y:item.spectrum_data,

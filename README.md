@@ -381,7 +381,7 @@ Licensed under MIT; see LICENSE.
 - View time waveforms and spectra together with capture time, sampling rate, frequency resolution, FFT window, and RPM source.
 - Choose **Live / latest** or one of the latest 100 recorded timestamps. Historical spectra compare against the saved channel baseline when acquisition settings match. The baseline button always captures the live spectrum.
 - Click a spectrum point to inspect frequency, amplitude, and order. The peak table ranks up to ten local maxima, excluding DC and endpoints, using original spectrum bins without interpolation.
-- Enable the order axis to use capture RPM, or enter a positive **Manual RPM** for the spectrum and baseline display. This is a frequency-axis conversion, not speed-synchronised order tracking. The waterfall remains in Hz.
+- Enable the order axis to use dashboard RPM automatically in the live view. Recorded captures use their own RPM. If RPM is missing, invalid, or incorrect, enter a positive **Manual RPM** for the spectrum and baseline display. This is a frequency-axis conversion, not speed-synchronised order tracking. The waterfall remains in Hz.
 - Review a responsive dashboard with wider channel cards, clearer measurement labels, consistent controls, and acquisition detail panels.
 
 Recorded values are unchanged. Waveforms and spectra are paired only at identical stored timestamps; missing data is shown as unavailable. Legacy recordings may lack RPM, FFT window, or UTC capture metadata; these remain unknown rather than being inferred from live readings. Spectrum amplitudes remain in published device units, and waveform amplitudes remain in sensor units.

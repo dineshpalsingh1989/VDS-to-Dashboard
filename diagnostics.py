@@ -167,7 +167,7 @@ def capture_details(snapshot, kind, manual_rpm=None):
                "Amplitude": "Device units" if kind == "Spectrum" else "Sensor units",
                "Sampling rate": f"{snapshot['sampling_freq']:g} Hz" if snapshot.get("sampling_freq") else "Unknown",
                "RPM": f"{rpm:g}" if rpm is not None else "Unavailable",
-               "RPM source": "Manual override" if manual_rpm is not None else "Capture" if rpm is not None else "Unavailable"}
+               "RPM source": "Manual override" if manual_rpm is not None else snapshot.get("rpm_source", "Capture") if rpm is not None else "Unavailable"}
     if kind == "Spectrum":
         bandwidth, lines = snapshot.get("bandwidth"), snapshot.get("lines")
         details["Frequency resolution"] = f"{bandwidth / lines:g} Hz" if bandwidth and lines else "Unknown"
@@ -204,4 +204,14 @@ def recorded_capture(conn, gid, ch, timestamp):
             for key, val in zip(fields.split(","), row[2:]):
                 if result[kind].get(key) is None:
                     result[kind][key] = val
+    return result
+
+
+def display_rpm(snapshot, dashboard_rpm=None, live=False):
+    """Resolve plot speed without altering stored captures or device state."""
+    result = dict(snapshot)
+    rpm = dashboard_rpm if live else result.get("rpm")
+    valid = isinstance(rpm, (int, float)) and not isinstance(rpm, bool) and np.isfinite(rpm) and rpm > 0
+    result["rpm"] = rpm if valid else None
+    result["rpm_source"] = ("Dashboard" if live else "Capture") if valid else "Unavailable"
     return result

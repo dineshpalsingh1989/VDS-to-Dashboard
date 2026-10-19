@@ -13,3 +13,5 @@ Historical reads use exact stored timestamps and channel identities. Missing leg
 Validation: 39 Python tests completed (2 Linux-only skips); four demo source/data checks passed; Ruff correctness checks passed; Chrome browser checks passed for all 14 routes, waveform display, capture selection, manual RPM, peak inspection, disabled actions, CSV export, and mobile overflow. Dashboard screenshots were refreshed.
 
 Publishing: pushes to main trigger the existing Dashboard checks and Public dashboard demo workflows. The demo deploys to GitHub Pages after its checks pass; the container package publishes after its checks pass.
+
+Follow-up: the device accordion uses one native expand/collapse arrow. Live order plots use dashboard RPM automatically; missing or invalid RPM prompts manual entry. A manual override is also available to correct an inaccurate RPM reading. Recorded captures retain their own RPM context.

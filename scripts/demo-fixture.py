@@ -118,7 +118,7 @@ app.load_mqtt_config = lambda: dict(BROKER=app.BROKER, PORT=app.PORT, TOPIC=app.
 app.log_messages.clear()
 app.log_messages.append("Synthetic viewer preview. No MQTT broker, PLC, or sensor is connected.")
 
-bank = {"gateway": gid, "channels": {}, "figures": {}, "capturedAt": datetime.fromtimestamp(epoch).isoformat()}
+bank = {"rpm": 1440, "gateway": gid, "channels": {}, "figures": {}, "capturedAt": datetime.fromtimestamp(epoch).isoformat()}
 for ch in ("1", "2", "3", "4"):
     data = app.data_storage[gid]["channels"][ch]
     bank["channels"][ch] = {key: data[key] for key in ("metrics", "metadata", "asset")}

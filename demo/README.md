@@ -40,3 +40,6 @@ acquisition details, manual RPM, strongest local peaks, and click-to-inspect rea
 Twelve synthetic captures per channel illustrate comparison with a saved baseline.
 These display controls work offline; they do not enable configuration or service
 changes. Manual RPM affects only spectrum plotting; waterfall frequencies stay in Hz.
+
+Live/latest sample order plots use the demo dashboard RPM automatically; recorded
+captures retain capture RPM. Manual RPM remains editable when a correction is needed.

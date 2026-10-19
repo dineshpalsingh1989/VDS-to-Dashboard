@@ -72,3 +72,24 @@ class AcquisitionTests(unittest.TestCase):
                 self.assertEqual(set(second), {"spectrum"})
                 self.assertEqual(second["spectrum"]["bandwidth"], 40)
                 self.assertEqual(recorded_capture(conn, "g", "2", "second"), {})
+
+
+class RpmSourceTests(unittest.TestCase):
+    def test_live_speed_follows_dashboard_without_changing_capture(self):
+        from diagnostics import display_rpm, capture_details
+        capture = dict(rpm=600)
+        displayed = display_rpm(capture, 1440, live=True)
+        self.assertEqual(displayed["rpm"], 1440)
+        self.assertEqual(capture_details(displayed, "Spectrum")["RPM source"], "Dashboard")
+        self.assertEqual(capture["rpm"], 600)
+
+    def test_invalid_dashboard_requires_manual_and_history_stays_independent(self):
+        from diagnostics import display_rpm
+        capture = dict(rpm=600, spectrum_data=[0, 1], bandwidth=20, lines=1)
+        for speed in (None, 0, -1, float("nan"), float("inf"), "bad"):
+            displayed = display_rpm(capture, speed, live=True)
+            self.assertIsNone(displayed["rpm"])
+            with self.assertRaises(ValueError):
+                spectrum_with_rpm(displayed, orders=True)
+            self.assertEqual(list(spectrum_with_rpm(displayed, orders=True, manual_rpm=1200).data[0].x), [0, 1])
+        self.assertEqual(display_rpm(capture, 1440, live=False)["rpm"], 600)

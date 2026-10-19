@@ -1714,11 +1714,10 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
         
         item_id = f"item-{gateway_id}"
         is_open = item_id in active_list
-        chevron_icon = html.I(className="fas fa-chevron-up" if is_open else "fas fa-chevron-down", style={'transition': 'transform 0.3s'})
         
         core_header = dbc.Row([
             dbc.Col(dbc.Row([dbc.Col(html.Span(f"Serial: {gateway_id}", style={"backgroundColor": "white", "color": "black", "border": "2px solid #007bff", "padding": "5px 10px", "borderRadius": "15px", "fontWeight": "bold", "marginRight": "15px", "boxShadow": "none", "fontSize": "0.9em"}), width="auto"), dbc.Col(html.Span([html.Span(f"Last Update: {last_seen_ts}", className="text-muted small"), rec_indicator]), width="auto")], align="center", className="g-2"), width=True),
-            dbc.Col(dbc.Row([dbc.Col(dbc.Button(html.I(className="fas fa-trash-alt"), id={'type': 'delete-btn', 'gateway': gateway_id}, color="danger", outline=True, size="sm"), width="auto"), dbc.Col(html.Div(chevron_icon, style={'color': '#6c757d', 'fontSize': '1.2em', 'marginLeft': '15px', 'cursor': 'pointer'}), width="auto")], align="center", className="g-2"), width="auto", className="ms-auto d-flex align-items-center")
+            dbc.Col(dbc.Row([dbc.Col(dbc.Button(html.I(className="fas fa-trash-alt"), id={'type': 'delete-btn', 'gateway': gateway_id}, color="danger", outline=True, size="sm"), width="auto")], align="center", className="g-2"), width="auto", className="ms-auto d-flex align-items-center")
         ], justify="start", align="center", className="w-100")
         
         styled_header = html.Div(core_header, className="accordion-header-fresh" if is_fresh else "", style={'border': '1px solid #B0E0FF', 'borderRadius': '8px', 'padding': '10px', 'backgroundColor': 'white', 'margin': '5px 0', 'boxShadow': '0 0 8px rgba(176, 224, 255, 0.6)', 'width': '100%', 'display': 'flex', 'alignItems': 'center'})
