@@ -33,3 +33,6 @@ button:focus-visible, a:focus-visible, select:focus-visible { outline: 3px solid
   .demo-page .accordion-header .col-auto { max-width: 100%; }
   .demo-notice a { margin-left: 0; }
 }
+
+/* Exported Dash graph wrappers need an explicit plotting height offline. */
+#diag-waveform .demo-plot, #diag-spectrum .demo-plot, #diag-waterfall .demo-plot { height: 400px; min-height: 350px; }

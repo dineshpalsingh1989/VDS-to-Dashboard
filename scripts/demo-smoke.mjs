@@ -64,6 +64,12 @@ try {
   assert((await evaluate('document.querySelector("#diag-details").textContent')).includes('Manual override'));
   await evaluate('document.querySelector("#diag-spectrum .js-plotly-plot").emit("plotly_click",{points:[{customdata:[24,1.2],y:.2}]})');
   assert((await evaluate('document.querySelector("#diag-cursor").textContent')).includes('24.000 Hz'));
+  await until('document.querySelector("#diag-spectrum .js-plotly-plot").getBoundingClientRect().height >= 350');
+  if(process.env.DEMO_DIAGNOSTICS_SCREENSHOT) {
+    await wait(300);
+    const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+    await writeFile(process.env.DEMO_DIAGNOSTICS_SCREENSHOT,Buffer.from(image.data,'base64'));
+  }
   await navigate('/assets');
   assert.equal(await evaluate('document.querySelector("#asset-direction").value'),'Vertical');
   await navigate('/history');

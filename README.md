@@ -124,7 +124,7 @@ operating condition is suitable as a reference. Compare the current spectrum to
 that baseline, inspect RPM harmonics, or enable the order axis. The waterfall
 shows compatible recorded spectra over time. The screenshot is zoomed to 0–500 Hz.
 
-![Current and baseline spectra with RPM harmonics and a waterfall of recorded captures](docs/images/diagnostics.png)
+![Updated diagnostics with recorded capture selection, manual RPM, acquisition details, waveform, spectrum, peak readings, and waterfall](docs/images/diagnostics.png)
 
 ### 4. Review health and export results
 
