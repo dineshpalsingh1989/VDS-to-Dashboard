@@ -310,7 +310,7 @@ async function navigate() {
     link.classList.toggle('active',active);active?link.setAttribute('aria-current','page'):link.removeAttribute('aria-current');
   });
   const active=document.querySelector('#sidebar [aria-current=page]');
-  document.title=`${active?.textContent.trim() || 'Dashboard'} · VDS public demo`;
+  document.title=`${active?.textContent.trim() || 'Dashboard'} · VDS-to-Dashboard public demo`;
   await Promise.all(Array.from(main.querySelectorAll('[data-demo-plot]')).map(element=>plot(element,page.figures[Number(element.dataset.demoPlot)])));
   if(version!==navigationVersion)return;
   if(route==='/')await setupDashboard();

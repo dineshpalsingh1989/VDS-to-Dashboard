@@ -1,4 +1,6 @@
-﻿# Wilcoxon VDS Condition Monitor
+﻿# VDS-to-Dashboard
+
+*Vibration monitoring and diagnostics for Wilcoxon VDS130.*
 
 [![GitHub checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
 [Download for Linux](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/archive/refs/heads/main.zip)
@@ -84,7 +86,7 @@ Click any screenshot to view it at full size.
 flowchart LR
     Sensors["IEPE sensors + tachometer"] --> VDS["Wilcoxon VDS130"]
     VDS -->|MQTT messages| Broker["Your MQTT broker"]
-    Broker --> App["VDS Condition Monitor"]
+    Broker --> App["VDS-to-Dashboard"]
     App --> DB[("SQLite historian")]
     App --> UI["Browser dashboard"]
     DB --> Analysis["Alarms, baselines, health checks"]

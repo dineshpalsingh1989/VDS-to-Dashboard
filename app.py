@@ -986,7 +986,7 @@ app = Dash(__name__,
             suppress_callback_exceptions=True,
             assets_folder='assets') 
 
-app.title = "Wilcoxon Vibration Monitor"
+app.title = "VDS-to-Dashboard"
 
 @app.server.get('/healthz')
 def healthcheck():
@@ -1006,7 +1006,7 @@ def protect_dashboard():
     viewer_password = os.environ.get('VDS_VIEWER_PASSWORD', '')
     viewer = auth and viewer_password and hmac.compare_digest(auth.username or '', os.environ.get('VDS_VIEWER_USER', 'viewer')) and hmac.compare_digest(auth.password or '', viewer_password)
     if not admin and not viewer:
-        return Response('Authentication required', 401, {'WWW-Authenticate': 'Basic realm="VDS Dashboard"'})
+        return Response('Authentication required', 401, {'WWW-Authenticate': 'Basic realm="VDS-to-Dashboard"'})
     if request.method == 'POST':
         origin = request.headers.get('Origin')
         if origin and urlsplit(origin).netloc != request.host:
@@ -1173,7 +1173,7 @@ header = dbc.Navbar(
     dbc.Container(
         [
             dbc.Button(html.I(className="fas fa-bars"), id="sidebar-toggle-btn", color="light", outline=True, n_clicks=0, className="me-2"),
-            html.A("VDS Condition Monitor", href="#", style={"textDecoration": "none", "color": "white", "fontSize": "1.25rem"})
+            html.A("VDS-to-Dashboard", href="#", style={"textDecoration": "none", "color": "white", "fontSize": "1.25rem"})
         ], fluid=True
     ), color="dark", dark=True, fixed="top" 
 )

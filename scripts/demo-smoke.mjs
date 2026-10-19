@@ -25,7 +25,7 @@ try {
   await call('Page.navigate',{url});
   await until('document.body.dataset.demoReady === "/"');
   assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
-  assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS Condition Monitor');
+  assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
   assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std Deviation:'));
   assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
   if(process.env.DEMO_SCREENSHOT) {
@@ -49,7 +49,14 @@ try {
     try { await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`); }
     catch(error) { console.log("Browser errors:", browser.errors); throw error; }
   }
-  for(const route of routes)await navigate(route);
+  for(const route of routes) {
+    await navigate(route);
+    const screenshot={'/assets':process.env.DEMO_ASSETS_SCREENSHOT,'/alarms':process.env.DEMO_ALARMS_SCREENSHOT}[route];
+    if(screenshot) {
+      const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+      await writeFile(screenshot,Buffer.from(image.data,'base64'));
+    }
+  }
   for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch']]) {
     await navigate(route);assert(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`),id+' must be disabled');
   }
