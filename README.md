@@ -122,7 +122,10 @@ Start a recording in **Data Storage** to retain raw captures. Open **Vibration
 diagnostics**, choose a channel, and use **Capture current baseline** when its
 operating condition is suitable as a reference. Compare the current spectrum to
 that baseline, inspect RPM harmonics, or enable the order axis. The waterfall
-shows compatible recorded spectra over time. The screenshot is zoomed to 0–500 Hz.
+shows compatible recorded spectra over time. Select a recorded capture, review its
+acquisition details and waveform, inspect the strongest peaks, or click a spectrum
+point for frequency, amplitude, and order. Enter Manual RPM when needed. The
+screenshot shows the updated order view with a display-only 1200 RPM override.
 
 ![Updated diagnostics with recorded capture selection, manual RPM, acquisition details, waveform, spectrum, peak readings, and waterfall](docs/images/diagnostics.png)
 
