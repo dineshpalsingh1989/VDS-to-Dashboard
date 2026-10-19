@@ -37,7 +37,7 @@ export async function openBrowser(width = 1640, height = 1100) {
     const pending=new Map(), errors=[];
     socket.addEventListener('message',event=>{
       const message=JSON.parse(event.data);
-      if(message.method==='Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.text);
+      if(message.method==='Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
       if(message.method==='Log.entryAdded' && message.params.entry.level==='error' && !message.params.entry.url?.endsWith('favicon.ico')) errors.push(message.params.entry.text);
       if(pending.has(message.id)) {
         const {resolve,reject,timer}=pending.get(message.id);clearTimeout(timer);pending.delete(message.id);

@@ -1149,7 +1149,7 @@ def create_channel_box(channel_id, gateway_id, data, device_config):
         ], className="w-100 mt-2")
     ]
 
-    return dbc.Col(dbc.Card([card_header, dbc.CardBody(card_body_content, style={"padding": "1rem"})], style=style), lg=2, md=4, sm=6, xs=12)
+    return dbc.Col(dbc.Card([card_header, dbc.CardBody(card_body_content, style={"padding": "1rem"})], style=style), className="device-card-column")
 
 def create_rpm_box(gateway_id, rpm_val, any_channel_active, device_config):
     base_3d = {"height": "100%", "backgroundColor": "#ffffff", "borderRadius": "8px", "boxShadow": "0 4px 12px rgba(0,0,0,0.1)", "border": "none"}
@@ -1167,7 +1167,7 @@ def create_rpm_box(gateway_id, rpm_val, any_channel_active, device_config):
     val = f"{rpm_val:.1f}" if isinstance(rpm_val, (int, float)) else "---" 
     trend_check_id = {"type": "rpm-trend-check", "gateway": gateway_id}
     
-    return dbc.Col(dbc.Card([dbc.CardHeader([html.Span(style=led_style, className=led_class),html.Strong("RPM", style={"verticalAlign": "middle"}),dbc.Checkbox(id=trend_check_id, label="Trend", value=is_checked, className="float-end")], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6"}),dbc.CardBody(html.H4(val, className="text-center my-4 py-4"), style={"padding": "1rem"})], style=style), lg=2, md=4, sm=6, xs=12)
+    return dbc.Col(dbc.Card([dbc.CardHeader([html.Span(style=led_style, className=led_class),html.Strong("RPM", style={"verticalAlign": "middle"}),dbc.Checkbox(id=trend_check_id, label="Trend", value=is_checked, className="float-end")], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6"}),dbc.CardBody(html.H4(val, className="text-center my-4 py-4"), style={"padding": "1rem"})], style=style), className="device-card-column")
 
 header = dbc.Navbar(
     dbc.Container(
@@ -1760,7 +1760,7 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
                 graph_content.append(dbc.Row(row_graphs))
             else: graph_content.append(html.Div(html.Small("Select 'Trend' checkbox on channels to view graphs.", className="text-muted text-center mt-2")))
         
-        accordion_items.append(dbc.AccordionItem(children=html.Div([dbc.Row(device_boxes_row, className="g-3 my-2"), html.Div(graph_content)]), title=styled_header, item_id=f"item-{gateway_id}"))
+        accordion_items.append(dbc.AccordionItem(children=html.Div([dbc.Row(device_boxes_row, className="device-card-grid my-2"), html.Div(graph_content)]), title=styled_header, item_id=f"item-{gateway_id}"))
     
     return dbc.Accordion(accordion_items, id="device-accordion", active_item=active_accordion_item, always_open=True, flush=True)
 

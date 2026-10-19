@@ -34,3 +34,9 @@ Bundled third-party files preserve their notices: Bootstrap 5.3.6 (MIT),
 Font Awesome Free 6.7.2 (see `vendor/fontawesome-LICENSE.txt`), and the Plotly.js
 version included with the installed Python Plotly package (MIT notice in
 `vendor/plotly.min.js`). Download origins are recorded in `vendor/sources.json`.
+
+Diagnostic exploration includes waveform and spectrum plots, capture selection,
+acquisition details, manual RPM, strongest local peaks, and click-to-inspect readings.
+Twelve synthetic captures per channel illustrate comparison with a saved baseline.
+These display controls work offline; they do not enable configuration or service
+changes. Manual RPM affects only spectrum plotting; waterfall frequencies stay in Hz.

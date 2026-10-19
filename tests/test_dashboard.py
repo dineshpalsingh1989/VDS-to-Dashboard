@@ -236,6 +236,33 @@ class DashboardTests(unittest.TestCase):
             headers=headers or {},
         )
 
+    def test_diagnostics_read_callbacks_and_recorded_selection(self):
+        import numpy as np
+        with closing(app.get_db_connection()) as conn, conn:
+            conn.execute("INSERT INTO raw_spectrum (gateway_id,channel,timestamp,spectrum_data,bandwidth,lines,context) VALUES (?,?,?,?,?,?,?)",
+                         ("g", "1", "2026-01-01 00:00:00", np.array([0, 3, 0], dtype="<f8").tobytes(), 40, 2,
+                          json.dumps(dict(bandwidth=40, lines=2, timestamp_ms=1767225600000))))
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test"}):
+            token = base64.b64encode(b"viewer:viewer-test").decode()
+            headers = {"Authorization": "Basic " + token}
+            response = self.callback_request("render_diagnostics", [
+                {"id": "diag-channel", "property": "value", "value": json.dumps(["g", "1"])},
+                {"id": "diag-orders", "property": "value", "value": ["orders"]},
+                {"id": "diag-rpm", "property": "value", "value": 1200},
+                {"id": "diag-capture", "property": "value", "value": "2026-01-01 00:00:00"},
+                {"id": "live-update-trigger", "property": "data", "value": 1}], headers=headers)
+            self.assertEqual(response.status_code, 200)
+            result = response.json["response"]
+            self.assertEqual(result["diag-peaks"]["data"][0]["frequency"], 20)
+            self.assertEqual(result["diag-peaks"]["data"][0]["order"], 1)
+            self.assertFalse(result["diag-waveform"]["figure"].get("data"))
+            response = self.callback_request("inspect_spectrum_point", [
+                {"id": "diag-spectrum", "property": "clickData", "value": {"points": [{"customdata": [20, 1], "y": 3}]}},
+                {"id": "diag-spectrum", "property": "figure", "value": {}}],
+                headers=headers, changed=["diag-spectrum.clickData"])
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("20.000 Hz", response.json["response"]["diag-cursor"]["children"])
+
     def test_operations_pages_render_and_asset_save_persists(self):
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": ""}):
             for page in ("/assets", "/alarms", "/diagnostics", "/reports"):

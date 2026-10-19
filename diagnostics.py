@@ -57,6 +57,36 @@ def history_figure(frame, title, rpm=False):
     return figure
 
 
+def waveform_figure(current):
+    values = np.asarray(current.get("waveform_data", []), dtype=float)
+    fs = current.get("sampling_freq")
+    if values.ndim != 1 or not values.size or not np.all(np.isfinite(values)):
+        raise ValueError("No validated waveform available for this channel")
+    if not isinstance(fs, (int, float)) or not np.isfinite(fs) or fs <= 0:
+        raise ValueError("Waveform requires a positive sampling frequency")
+    return go.Figure(go.Scattergl(
+        x=np.arange(values.size) / fs, y=values, mode="lines", name="Waveform"
+    )).update_layout(template="plotly_white", title="Time waveform",
+        xaxis_title="Time (s)", yaxis_title="Published waveform (sensor units)",
+        uirevision="waveform")
+
+
+def spectrum_with_rpm(current, baseline=None, orders=False, manual_rpm=None):
+    """Apply a display-only speed override without modifying capture metadata."""
+    current = dict(current)
+    baseline = dict(baseline) if baseline else None
+    if manual_rpm is not None:
+        if not isinstance(manual_rpm, (int, float)) or not np.isfinite(manual_rpm) or manual_rpm <= 0:
+            raise ValueError("Manual RPM must be a finite number greater than zero")
+        current["rpm"] = manual_rpm
+        if baseline:
+            baseline["rpm"] = manual_rpm
+    figure = spectrum_figure(current, baseline, orders)
+    if manual_rpm is not None:
+        figure.update_layout(title=f"Spectrum comparison - manual RPM: {manual_rpm:g}")
+    return figure
+
+
 def spectrum_figure(current, baseline=None, orders=False, harmonics=5):
     x, y = spectrum_xy(current, orders)
     figure = go.Figure(go.Scatter(x=x, y=y, name="Current", mode="lines"))
@@ -80,7 +110,16 @@ def spectrum_figure(current, baseline=None, orders=False, harmonics=5):
                     line_color="#b36b00",
                     annotation_text=f"{order}×",
                 )
+    for trace in figure.data:
+        tx = np.asarray(trace.x, dtype=float)
+        # The order axis can use a distinct capture RPM for each trace.
+        speed = (baseline.get("rpm") if trace.name == "Baseline" else current.get("rpm"))
+        hz = tx * (speed / 60) if orders else tx
+        order_values = hz / (speed / 60) if speed and speed > 0 else np.full(tx.size, np.nan)
+        trace.update(customdata=np.column_stack((hz, order_values)),
+                     hovertemplate="%{customdata[0]:.3f} Hz<br>%{y:.6g} device units<br>Order: %{customdata[1]:.3f}<extra>%{fullData.name}</extra>")
     figure.update_layout(
+        hovermode="closest", clickmode="event+select",
         template="plotly_white",
         xaxis_title="Order (× RPM)" if orders else "Frequency (Hz)",
         yaxis_title="Published power spectrum (device units)",
@@ -116,3 +155,53 @@ def waterfall_figure(snapshots):
         yaxis_title="Capture time",
     )
     return figure
+
+
+def capture_details(snapshot, kind, manual_rpm=None):
+    """Human-readable acquisition details, preserving unknown legacy settings."""
+    timestamp = snapshot.get("timestamp_ms")
+    captured = (datetime.fromtimestamp(timestamp / 1000, timezone.utc).isoformat()
+                if timestamp else ("Stored time: " + snapshot["label"] + " (timezone unknown)" if snapshot.get("label") else "Unknown"))
+    rpm = manual_rpm if manual_rpm is not None else snapshot.get("rpm")
+    details = {"Plot": kind, "Capture (UTC)": captured,
+               "Amplitude": "Device units" if kind == "Spectrum" else "Sensor units",
+               "Sampling rate": f"{snapshot['sampling_freq']:g} Hz" if snapshot.get("sampling_freq") else "Unknown",
+               "RPM": f"{rpm:g}" if rpm is not None else "Unavailable",
+               "RPM source": "Manual override" if manual_rpm is not None else "Capture" if rpm is not None else "Unavailable"}
+    if kind == "Spectrum":
+        bandwidth, lines = snapshot.get("bandwidth"), snapshot.get("lines")
+        details["Frequency resolution"] = f"{bandwidth / lines:g} Hz" if bandwidth and lines else "Unknown"
+        details["Bandwidth"] = f"{bandwidth:g} Hz" if bandwidth else "Unknown"
+        details["FFT window"] = snapshot.get("window") or "Unknown"
+    return details
+
+
+def spectrum_peaks(snapshot, manual_rpm=None, limit=10):
+    x, y = spectrum_xy(snapshot)
+    rpm = manual_rpm if manual_rpm is not None else snapshot.get("rpm")
+    if manual_rpm is not None and (not np.isfinite(manual_rpm) or manual_rpm <= 0):
+        raise ValueError("Manual RPM must be a finite number greater than zero")
+    # Exclude DC and endpoints; rank discrete local maxima without interpolation.
+    candidates = [i for i in range(1, len(y) - 1)
+                  if np.isfinite(y[i]) and y[i] > y[i - 1] and y[i] >= y[i + 1]]
+    candidates.sort(key=lambda i: (-y[i], i))
+    return [{"frequency": float(x[i]), "amplitude": float(y[i]),
+             "order": float(x[i] / (rpm / 60)) if rpm and rpm > 0 else None}
+            for i in candidates[:limit]]
+
+
+def recorded_capture(conn, gid, ch, timestamp):
+    """Read only exact timestamp matches: never pair separate acquisitions."""
+    result = {}
+    for kind, table, column, fields in (("waveform", "raw_waveforms", "waveform_data", "sampling_freq"),
+                                 ("spectrum", "raw_spectrum", "spectrum_data", "bandwidth,lines")):
+        row = conn.execute(f"SELECT {column},context,{fields} FROM {table} WHERE gateway_id=? AND channel=? AND timestamp=?",
+                           (gid, ch, timestamp)).fetchone()
+        if row:
+            result[kind] = dict(json.loads(row[1]) if row[1] else {},
+                                **{column: np.frombuffer(row[0], dtype="<f8").tolist()},
+                                label=str(timestamp))
+            for key, val in zip(fields.split(","), row[2:]):
+                if result[kind].get(key) is None:
+                    result[kind][key] = val
+    return result

@@ -6,7 +6,8 @@ const $ = id => document.getElementById(id);
 const metrics = ['Velocity', 'Acceleration', 'Crest Factor', 'Displacement', 'True Peak', 'Std Deviation'];
 let channel = '1', modalFocus;
 let orders = false;
-let navigationVersion = 0;
+let manualRpm = "", captureChoice = "live";
+let navigationVersion = 0, diagnosticVersion = 0;
 const trends = new Set(['1']);
 const selectedMetrics = {};
 const main = $('page-content');
@@ -36,6 +37,8 @@ function clone(value) { return JSON.parse(JSON.stringify(value)); }
 async function plot(element, figure) {
   if (!element || !figure) return;
   const spec = clone(figure);
+  // SVG traces keep the offline viewer compatible with its strict script policy.
+  for (const trace of spec.data) if (trace.type === "scattergl") trace.type = "scatter";
   delete spec.layout.width;
   spec.layout.autosize = true;
   await window.Plotly.react(element, spec.data, spec.layout, {responsive: true, displaylogo: false, displayModeBar: false});
@@ -172,13 +175,16 @@ async function setupChannelPage(route) {
   const prefix={'/assets':'asset','/alarms':'rule','/diagnostics':'diag'}[route];
   if(!prefix)return;
   options(prefix+'-channel',channelOptions(),channel);
-  $(prefix+'-channel').addEventListener('change',()=>{channel=$(prefix+'-channel').value;update();});
+  $(prefix+'-channel').addEventListener('change',()=>{channel=$(prefix+'-channel').value;captureChoice='live';update();});
   if(route==='/alarms') {
     options('rule-metric',metrics,'Velocity');$('rule-metric').addEventListener('change',update);
   }
   if(route==='/diagnostics') {
     const input=document.querySelector('#diag-orders input');input.disabled=false;input.checked=orders;
     input.addEventListener('change',()=>{orders=input.checked;update();});
+    const rpm=$('diag-rpm');rpm.readOnly=false;rpm.value=manualRpm;rpm.removeAttribute('title');
+    rpm.addEventListener('change',()=>{manualRpm=rpm.value;update();});
+    $('diag-capture').addEventListener('change',()=>{captureChoice=$('diag-capture').value;update();});
   }
   async function update() {
     const data=bank.channels[channel];
@@ -193,12 +199,89 @@ async function setupChannelPage(route) {
       $('rule-alert').value=channel==='1' && metric==='Velocity'?5:6;
     }
     if(route==='/diagnostics') {
-      await plot(document.querySelector('#diag-spectrum .demo-plot'),bank.figures[`diagnostics:${channel}:${Number(orders)}`]);
+      await renderDiagnostics(data);
       await plot(document.querySelector('#diag-waterfall .demo-plot'),bank.figures[`waterfall:${channel}`]);
     }
   }
   await update();
 }
+async function renderDiagnostics(data) {
+  const revision=++diagnosticVersion, navigation=navigationVersion;
+  const active=()=>revision===diagnosticVersion && navigation===navigationVersion;
+  const captures=data.captures;
+  options('diag-capture',[{label:'Live / latest sample',value:'live'},
+    ...captures.map((item,i)=>({label:new Date(item.timestamp_ms).toISOString(),value:String(i)})).reverse()],captureChoice);
+  const current=captures[captureChoice==='live'?captures.length-1:Number(captureChoice)];
+  const speed=manualRpm===''?current.rpm:Number(manualRpm);
+  const validManual=manualRpm==='' || (Number.isFinite(speed) && speed>0);
+  const notices=[];
+  $('diag-cursor').textContent='Click a spectrum point to inspect frequency, amplitude, and order.';
+  const details=$('diag-details');details.replaceChildren();
+  for(const [kind,item] of [['Waveform',current.waveform],['Spectrum',current]]) {
+    const card=document.createElement('div');card.className='acquisition-card';
+    const title=document.createElement('h6');title.textContent=kind;card.append(title);
+    const dl=document.createElement('dl');card.append(dl);
+    const values={'Capture (UTC)':new Date(item.timestamp_ms).toISOString(),
+      'Amplitude':kind==='Spectrum'?'Device units':'Sensor units',
+      'Sampling rate':`${item.sampling_freq} Hz`,
+      'RPM':kind==='Spectrum'?(speed??'Unavailable'):(item.rpm??'Unavailable'),
+      'RPM source':kind==='Spectrum' && manualRpm!==''?'Manual override':'Capture'};
+    if(kind==='Spectrum')Object.assign(values,{'Frequency resolution':`${item.bandwidth/item.lines} Hz`,'Bandwidth':`${item.bandwidth} Hz`,'FFT window':item.window||'Unknown'});
+    for(const [key,value] of Object.entries(values)) {
+      const row=document.createElement('div'),dt=document.createElement('dt'),dd=document.createElement('dd');
+      dt.textContent=key;dd.textContent=String(value);row.append(dt,dd);dl.append(row);
+    }
+    details.append(card);
+  }
+  const wave=current.waveform;
+  await plot(document.querySelector('#diag-waveform .demo-plot'),{data:[{x:wave.waveform_data.map((_,i)=>i/wave.sampling_freq),y:wave.waveform_data,type:'scattergl',mode:'lines'}],layout:{template:'plotly_white',title:'Time waveform',xaxis:{title:{text:'Time (s)'}},yaxis:{title:{text:'Published waveform (sensor units)'}}}});
+  if(!active())return;
+  const graph=document.querySelector('#diag-spectrum .demo-plot');
+  const table=$('diag-peaks');table.replaceChildren();
+  if(!validManual || (orders && !(speed>0))) {
+    notices.push('Enter a finite, positive RPM for order analysis.');
+    await plot(graph,{data:[],layout:{title:'Spectrum unavailable'}});
+  } else {
+    const fig=clone(bank.figures[`diagnostics:${channel}:0`]);
+    fig.data=[current,data.baseline].map((item,index)=>{
+      const rpm=manualRpm===''?item.rpm:speed;
+      const hz=item.spectrum_data.map((_,i)=>i*item.bandwidth/item.lines);
+      return {name:index?'Baseline':'Current',mode:'lines',type:'scatter',line:index?{dash:'dot'}:{},
+        x:hz.map(v=>orders?v/(rpm/60):v),y:item.spectrum_data,
+        customdata:hz.map(v=>[v,rpm>0?v/(rpm/60):null]),
+        hovertemplate:'%{customdata[0]:.3f} Hz<br>%{y:.6g} device units<br>Order: %{customdata[1]:.3f}<extra>%{fullData.name}</extra>'};
+    });
+    fig.layout.xaxis.title.text=orders?'Order (x RPM)':'Frequency (Hz)';
+    fig.layout.title.text=manualRpm===''?'Spectrum comparison':`Spectrum comparison - manual RPM: ${speed}`;
+    fig.layout.shapes=[];fig.layout.annotations=[];
+    if(speed>0)for(let n=1;n<=5;n++) {
+      const position=orders?n:n*speed/60;
+      if(position<=fig.data[0].x.at(-1))fig.layout.shapes.push({type:'line',x0:position,x1:position,y0:0,y1:1,yref:'paper',line:{dash:'dash',color:'#b36b00'}});
+    }
+    await plot(graph,fig);
+    if(!active())return;
+    graph.removeAllListeners?.('plotly_click');
+    graph.on('plotly_click',event=>{
+      const p=event.points[0],[hz,order]=p.customdata;
+      $('diag-cursor').textContent=`Frequency: ${hz.toFixed(3)} Hz | Amplitude: ${Number(p.y).toPrecision(6)} device units | Order: ${order==null?'Unavailable':order.toFixed(3)}`;
+    });
+    const peaks=[];const y=current.spectrum_data;
+    for(let i=1;i<y.length-1;i++)if(y[i]>y[i-1] && y[i]>=y[i+1])peaks.push({i,value:y[i]});
+    peaks.sort((a,b)=>b.value-a.value || a.i-b.i);
+    const native=document.createElement('table');native.className='table mb-0';
+    const header=native.createTHead().insertRow();
+    for(const label of ['Frequency (Hz)','Amplitude (device units)','Order']) {const th=document.createElement('th');th.textContent=label;header.append(th);}
+    const body=native.createTBody();
+    for(const peak of peaks.slice(0,10)) {
+      const hz=peak.i*current.bandwidth/current.lines;
+      const row=body.insertRow();
+      for(const value of [hz.toFixed(3),peak.value.toPrecision(6),speed>0?(hz/(speed/60)).toFixed(3):'Unavailable'])row.insertCell().textContent=value;
+    }
+    table.append(native);
+  }
+  if(active())$('diag-result').textContent=notices.join(' ');
+}
+
 async function setupHistory() {
   options('history-gateway-select',[bank.gateway],bank.gateway);
   options('history-channel-select',['1','2','3','4'],channel);

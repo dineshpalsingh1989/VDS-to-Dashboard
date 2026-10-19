@@ -45,7 +45,8 @@ try {
   const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
   async function navigate(route) {
     await evaluate(`location.hash=${JSON.stringify(route)}`);
-    await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`);
+    try { await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`); }
+    catch(error) { console.log("Browser errors:", browser.errors); throw error; }
   }
   for(const route of routes)await navigate(route);
   for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch']]) {
@@ -55,6 +56,14 @@ try {
   await evaluate('document.querySelector("#diag-channel").value="2";document.querySelector("#diag-channel").dispatchEvent(new Event("change"))');
   await evaluate('document.querySelector("#diag-orders input").click()');
   await until('document.querySelector("#diag-spectrum .js-plotly-plot")?.layout?.xaxis?.title?.text?.startsWith("Order")');
+  await until('document.querySelector("#diag-waveform .js-plotly-plot")?.data?.[0]?.y?.length > 0');
+  await evaluate('document.querySelector("#diag-rpm").value="1200";document.querySelector("#diag-rpm").dispatchEvent(new Event("change"))');
+  await until('document.querySelector("#diag-spectrum .js-plotly-plot")?.layout?.title?.text?.includes("1200")');
+  await evaluate('const captures=document.querySelector("#diag-capture");captures.value="0";captures.dispatchEvent(new Event("change"))');
+  await until('document.querySelector("#diag-capture").value === "0" && document.querySelector("#diag-peaks tbody tr")');
+  assert((await evaluate('document.querySelector("#diag-details").textContent')).includes('Manual override'));
+  await evaluate('document.querySelector("#diag-spectrum .js-plotly-plot").emit("plotly_click",{points:[{customdata:[24,1.2],y:.2}]})');
+  assert((await evaluate('document.querySelector("#diag-cursor").textContent')).includes('24.000 Hz'));
   await navigate('/assets');
   assert.equal(await evaluate('document.querySelector("#asset-direction").value'),'Vertical');
   await navigate('/history');

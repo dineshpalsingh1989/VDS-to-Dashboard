@@ -82,6 +82,7 @@ for index in range(12):
         data = app.data_storage[gid]["channels"][ch]
         snapshot = dict(copy.deepcopy(data["spectrum_context"]), spectrum_data=data["spectrum_data"],
                         metrics=data["metrics"], metadata=data["metadata"], label=datetime.fromtimestamp(capture / 1000).isoformat())
+        snapshot["waveform"] = dict(copy.deepcopy(data["waveform_context"]), waveform_data=data["waveform_data"])
         captures[ch].append(snapshot)
         if index == 0:
             baselines[ch] = snapshot
@@ -121,6 +122,8 @@ bank = {"gateway": gid, "channels": {}, "figures": {}, "capturedAt": datetime.fr
 for ch in ("1", "2", "3", "4"):
     data = app.data_storage[gid]["channels"][ch]
     bank["channels"][ch] = {key: data[key] for key in ("metrics", "metadata", "asset")}
+    bank["channels"][ch]["captures"] = captures[ch]
+    bank["channels"][ch]["baseline"] = baselines[ch]
     bank["channels"][ch]["history"] = {metric: list(data["trends"][metric]) for metric in app.TRENDED_METRICS}
     bank["channels"][ch]["times"] = [str(t) for t in data["trend_x"]["Velocity"]]
     for orders in (False, True):

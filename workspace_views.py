@@ -12,7 +12,7 @@ from flask import request
 import dash_bootstrap_components as dbc
 
 import historian
-from diagnostics import spectrum_figure, waterfall_figure
+from diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture
 from vds import spectrum_xy
 
 READ_CALLBACKS = {
@@ -21,6 +21,8 @@ READ_CALLBACKS = {
     "load_rule_form",
     "alarm_event_rows",
     "render_diagnostics",
+    "diagnostic_capture_options",
+    "inspect_spectrum_point",
     "download_report",
     "load_report",
     "refresh_operations",
@@ -158,15 +160,23 @@ def diagnostics_page():
         [
             html.H3("Vibration diagnostics"),
             html.P(
-                "Inspect published spectra, compare baselines, and review recorded captures. These plots do not classify mechanical faults.",
+                "Inspect waveforms and published spectra, compare baselines, and review recorded captures. These plots do not classify mechanical faults.",
                 className="text-muted",
             ),
             channel_selector("diag"),
+            dbc.Label("Capture", html_for="diag-capture"),
+            dcc.Dropdown(id="diag-capture", options=[{"label": "Live / latest", "value": "live"}],
+                         value="live", clearable=False, className="mb-3"),
+            html.Small("Latest 100 recorded timestamps. Selected captures compare against the saved channel baseline. Waveform and spectrum are paired only when their timestamps match.", className="text-muted d-block mb-3"),
             dbc.Checklist(
                 id="diag-orders",
                 options=[{"label": "Order axis (requires RPM)", "value": "orders"}],
                 value=[],
             ),
+            dbc.Label("Manual RPM (optional)", html_for="diag-rpm"),
+            dbc.Input(id="diag-rpm", type="number", min=0, step="any",
+                      placeholder="Enter RPM if unavailable, or override for this plot"),
+            html.Small("Leave blank to use capture RPM. Manual RPM affects only the spectrum and baseline display; the waterfall stays in Hz.", className="text-muted d-block mb-3"),
             dbc.Button(
                 "Capture current baseline",
                 id="baseline-save",
@@ -175,7 +185,17 @@ def diagnostics_page():
             ),
             html.Div(id="baseline-result"),
             html.Div(id="diag-result"),
+            html.Div(id="diag-details", className="acquisition-grid"),
+            dcc.Graph(id="diag-waveform"),
             dcc.Graph(id="diag-spectrum"),
+            html.Div(id="diag-cursor", className="alert alert-light border", children="Click a spectrum point to inspect frequency, amplitude, and order."),
+            html.H5("Strongest local peaks"),
+            html.Small("Discrete spectrum bins, excluding DC and endpoints; amplitudes remain in device units.", className="text-muted"),
+            dash_table.DataTable(id="diag-peaks", columns=[
+                {"name": "Frequency (Hz)", "id": "frequency", "type": "numeric", "format": {"specifier": ".3f"}},
+                {"name": "Amplitude (device units)", "id": "amplitude", "type": "numeric", "format": {"specifier": ".6g"}},
+                {"name": "Order", "id": "order", "type": "numeric", "format": {"specifier": ".3f"}}],
+                data=[], style_table={"overflowX": "auto"}, style_cell={"textAlign": "left", "padding": "12px"}),
             dcc.Graph(id="diag-waterfall"),
             html.Small(
                 "Baseline comparisons require matching acquisition settings. The MQTT schema may omit the FFT window; verify unchanged device settings when the window is unknown."
@@ -478,30 +498,85 @@ def register(app, get_connection, get_snapshot, apply_asset):
         except (ValueError, TypeError) as exc:
             return dbc.Alert(str(exc), color="warning")
 
+    @app.callback(Output("diag-capture", "options"),
+                  Input("diag-channel", "value"), Input("live-update-trigger", "data"))
+    def diagnostic_capture_options(value, trigger):
+        options = [{"label": "Live / latest", "value": "live"}]
+        try:
+            gid, ch = split_channel(value)
+            with closing(get_connection()) as conn:
+                rows = conn.execute("SELECT timestamp FROM raw_spectrum WHERE gateway_id=? AND channel=? UNION SELECT timestamp FROM raw_waveforms WHERE gateway_id=? AND channel=? ORDER BY timestamp DESC LIMIT 100",
+                                    (gid, ch, gid, ch)).fetchall()
+            options.extend({"label": str(row[0]) + " (stored time)", "value": str(row[0])} for row in rows)
+        except (ValueError, TypeError):
+            pass
+        return options
+
+    @app.callback(Output("diag-cursor", "children"), Input("diag-spectrum", "clickData"),
+                  Input("diag-spectrum", "figure"))
+    def inspect_spectrum_point(clicked, figure):
+        from dash import ctx
+        if ctx.triggered_id != "diag-spectrum" or any(item["prop_id"].endswith(".figure") for item in ctx.triggered):
+            return "Click a spectrum point to inspect frequency, amplitude, and order."
+        try:
+            point = clicked["points"][0]
+            hz, order = point["customdata"]
+            order_text = f"{order:.3f}" if order is not None and np.isfinite(order) else "Unavailable"
+            return f"Frequency: {hz:.3f} Hz | Amplitude: {point['y']:.6g} device units | Order: {order_text}"
+        except (KeyError, TypeError, IndexError, ValueError):
+            return "Click a spectrum trace point to inspect its measurement."
+
     @app.callback(
         [
+            Output("diag-waveform", "figure"),
             Output("diag-spectrum", "figure"),
             Output("diag-waterfall", "figure"),
             Output("diag-result", "children"),
+            Output("diag-details", "children"),
+            Output("diag-peaks", "data"),
         ],
         [
             Input("diag-channel", "value"),
             Input("diag-orders", "value"),
+            Input("diag-rpm", "value"),
+            Input("diag-capture", "value"),
             Input("live-update-trigger", "data"),
         ],
     )
-    def render_diagnostics(value, orders, trigger):
+    def render_diagnostics(value, orders, manual_rpm, capture, trigger):
         import plotly.graph_objects as go
 
         try:
             gid, ch = split_channel(value)
             current = current_spectrum(gid, ch)
+            notices = []
+            data = get_snapshot().get(gid, {}).get("channels", {}).get(ch, {})
+            wave = dict(data.get("waveform_context", {}), waveform_data=data.get("waveform_data", []))
             with closing(get_connection()) as conn:
+                if capture and capture != "live":
+                    recorded = recorded_capture(conn, gid, ch, capture)
+                    current = recorded.get("spectrum", {})
+                    wave = recorded.get("waveform", {})
+                    notices.append("Recorded capture selected; baseline button still captures live data.")
                 baseline = historian.get_json(conn, "baselines", "snapshot", gid, ch)
                 rows = conn.execute(
                     "SELECT timestamp,spectrum_data,context FROM raw_spectrum WHERE gateway_id=? AND channel=? AND context IS NOT NULL ORDER BY timestamp DESC LIMIT 50",
                     (gid, ch),
                 ).fetchall()
+            details = [html.Div([html.H6(kind), html.Dl([
+                html.Div([html.Dt(key), html.Dd(str(val))])
+                for key, val in capture_details(item, kind, speed).items() if key != "Plot"
+            ])], className="acquisition-card") for kind, item, speed in
+                (("Waveform", wave, None), ("Spectrum", current, manual_rpm))]
+            try:
+                waveform = waveform_figure(wave)
+            except (ValueError, TypeError) as exc:
+                waveform = go.Figure().update_layout(title="Time waveform unavailable")
+                notices.append(str(exc))
+            try:
+                peaks = spectrum_peaks(current, manual_rpm)
+            except (ValueError, TypeError):
+                peaks = []
             snapshots = []
             for timestamp, blob, context in reversed(rows):
                 item = json.loads(context)
@@ -511,26 +586,31 @@ def register(app, get_connection, get_snapshot, apply_asset):
                     label=str(timestamp),
                 )
                 snapshots.append(item)
-            notices = []
             try:
-                spectrum = spectrum_figure(
-                    current, baseline or None, "orders" in (orders or [])
-                )
-            except ValueError as exc:
+                spectrum = spectrum_with_rpm(current, baseline or None,
+                                             "orders" in (orders or []), manual_rpm)
+            except (ValueError, TypeError) as exc:
                 notices.append(str(exc))
-                spectrum = spectrum_figure(current, orders="orders" in (orders or []))
+                try:
+                    spectrum = spectrum_with_rpm(current, orders="orders" in (orders or []),
+                                                 manual_rpm=manual_rpm)
+                except (ValueError, TypeError):
+                    spectrum = go.Figure().update_layout(title="Spectrum unavailable")
             try:
                 waterfall = waterfall_figure(snapshots)
             except ValueError as exc:
                 waterfall = go.Figure()
                 notices.append(str(exc))
             return (
+                waveform,
                 spectrum,
                 waterfall,
                 dbc.Alert(" ".join(notices), color="info") if notices else "",
+                details,
+                peaks,
             )
         except (ValueError, TypeError) as exc:
-            return go.Figure(), go.Figure(), dbc.Alert(str(exc), color="info")
+            return go.Figure(), go.Figure(), go.Figure(), dbc.Alert(str(exc), color="info"), [], []
 
     @app.callback(Output("report-preview", "children"), Input("report-day", "date"))
     def load_report(day):
