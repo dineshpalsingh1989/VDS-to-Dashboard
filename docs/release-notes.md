@@ -31,4 +31,4 @@ Automated checks cover Python syntax, dependency compatibility, tests, Linux
 launcher syntax, container startup, HTTP routes, and verified backup creation.
 These software checks do not replace commissioning with actual VDS/PLC hardware.
 
-Container package: https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds
+Container package: https://github.com/dineshpalsingh1989/VDS-to-Dashboard/pkgs/container/wilcoxon-vds

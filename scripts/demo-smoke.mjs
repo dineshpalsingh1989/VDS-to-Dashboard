@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { openBrowser, wait } from './demo-browser.mjs';
 
 const root=fileURLToPath(new URL('../demo/',import.meta.url));
-const prefix='/Wilcoxon-VDS/';
+const prefix='/VDS-to-Dashboard/';
 const types={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript','.json':'application/json','.css':'text/css','.woff2':'font/woff2','.ttf':'font/ttf'};
 const server=createServer(async(request,response)=>{
   const pathname=new URL(request.url,'http://localhost').pathname;

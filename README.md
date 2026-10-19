@@ -2,10 +2,10 @@
 
 *Vibration monitoring and diagnostics for Wilcoxon VDS130.*
 
-[![GitHub checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
-[Download for Linux](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/archive/refs/heads/main.zip)
+[![GitHub checks](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml)
+[Download for Linux](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/archive/refs/heads/main.zip)
 
-**[Open the interactive dashboard demo →](https://dineshpalsingh1989.github.io/Wilcoxon-VDS/)**
+**[Open the interactive dashboard demo →](https://dineshpalsingh1989.github.io/VDS-to-Dashboard/)**
 
 Try the real application's layout in your browser with no installation or login.
 The demo uses the same dark header, full navigation menu, device accordion,
@@ -27,8 +27,8 @@ dependencies. Linux AMD64 PCs/servers and ARM64 systems use the same launcher;
 32-bit Raspberry Pi operating systems are not supported by the published images.
 
 ```bash
-curl -fL https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest/download/wilcoxon-vds-linux.tar.gz -o wilcoxon-vds-linux.tar.gz
-curl -fL https://github.com/dineshpalsingh1989/Wilcoxon-VDS/releases/latest/download/SHA256SUMS -o SHA256SUMS
+curl -fL https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/wilcoxon-vds-linux.tar.gz -o wilcoxon-vds-linux.tar.gz
+curl -fL https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/SHA256SUMS -o SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 tar -xzf wilcoxon-vds-linux.tar.gz
 cd wilcoxon-vds
@@ -358,7 +358,7 @@ do not connect to physical sensors or PLCs. CI runs tests and builds the image.
 
 ## GitHub code checks and downloads
 
-[Dashboard checks](https://github.com/dineshpalsingh1989/Wilcoxon-VDS/actions/workflows/checks.yml)
+[Dashboard checks](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml)
 runs on pushes to `main`, pull requests, version tags, and manual requests:
 
 - Check dependency compatibility, Python syntax, and undefined names.

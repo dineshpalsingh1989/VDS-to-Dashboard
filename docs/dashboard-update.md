@@ -16,4 +16,4 @@ Publishing: pushes to main trigger the existing Dashboard checks and Public dash
 
 Follow-up: the device accordion uses one native expand/collapse arrow. Live order plots use dashboard RPM automatically; missing or invalid RPM prompts manual entry. A manual override is also available to correct an inaccurate RPM reading. Recorded captures retain their own RPM context.
 
-Project name: **VDS-to-Dashboard**. Subtitle: Vibration monitoring and diagnostics for Wilcoxon VDS130. The existing repository URL, container package, and persistent-volume names remain stable for existing installations.
+Project name: **VDS-to-Dashboard**. Subtitle: Vibration monitoring and diagnostics for Wilcoxon VDS130. The repository is now VDS-to-Dashboard. The existing container package and persistent-volume names remain stable for existing installations.

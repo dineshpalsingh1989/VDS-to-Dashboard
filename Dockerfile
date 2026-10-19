@@ -1,6 +1,6 @@
 FROM python:3.14-slim
-LABEL org.opencontainers.image.source="https://github.com/dineshpalsingh1989/Wilcoxon-VDS" \
-    org.opencontainers.image.title="Wilcoxon VDS Condition Monitor" \
+LABEL org.opencontainers.image.source="https://github.com/dineshpalsingh1989/VDS-to-Dashboard" \
+    org.opencontainers.image.title="VDS-to-Dashboard" \
     org.opencontainers.image.description="MQTT vibration monitoring, SQLite history, and advisory diagnostics" \
     org.opencontainers.image.licenses="MIT"
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
