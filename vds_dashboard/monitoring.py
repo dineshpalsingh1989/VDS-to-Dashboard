@@ -1,5 +1,7 @@
 """Deterministic advisory agents. Findings never trigger machine commands."""
 
+import json
+import os
 import time
 from datetime import datetime
 
@@ -94,4 +96,42 @@ def assess_health(devices, mqtt_status, disk_free_percent, now=None, baselines=N
                 f"MQTT is connected, {len(devices)} devices are fresh, and storage capacity is healthy.",
             )
         )
+    return findings
+
+
+AI_SEVERITIES = {"info", "warning"}
+
+
+def load_ai_findings(data_folder, now=None, max_age=600, limit=20):
+    """Read advisory findings written by iriv-edge/ai_advisor.py, if it is installed.
+
+    The file is display-only input: severities are capped at warning, text is
+    truncated, and nothing here can trigger a machine command.
+    """
+    path = os.path.join(data_folder, "ai", "findings.json")
+    epoch = time.time() if now is None else now
+    try:
+        with open(path, encoding="utf-8") as stream:
+            report = json.load(stream)
+        generated = float(report["generated_at"])
+        items = list(report.get("findings", []))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, KeyError, TypeError):
+        return [("warning", "AI advisor", "The AI advisor report could not be read.")]
+    age = epoch - generated
+    if age > max_age:
+        return [("info", "AI advisor", f"No AI advisor update for {age / 60:.0f} minutes. Check the vds-ai-advisor service.")]
+    findings = []
+    for item in items[:limit]:
+        if not isinstance(item, dict):
+            continue
+        severity = item.get("severity") if item.get("severity") in AI_SEVERITIES else "info"
+        findings.append((severity, "AI advisor", str(item.get("message", ""))[:400]))
+    if not findings:
+        scored = report.get("scored") or {}
+        backend = "AI HAT+" if report.get("backend") == "hailo" else "CPU"
+        findings.append(("success", "AI advisor", (
+            f"No unusual vibration ({backend}; {scored.get('metrics', 0)} metrics and "
+            f"{scored.get('spectra', 0)} spectra had enough history to compare).")))
     return findings

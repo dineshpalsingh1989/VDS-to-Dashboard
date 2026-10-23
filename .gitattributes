@@ -8,3 +8,4 @@ demo/*.html text eol=lf
 demo/*.css text eol=lf
 demo/vendor/** linguist-vendored=true -whitespace
 demo/snapshots.json linguist-generated=true
+*.service text eol=lf

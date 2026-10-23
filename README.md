@@ -234,6 +234,13 @@ administration is intentionally unavailable inside the restricted container.
 Stop the stack with `docker compose --env-file .env -f docker/compose.yaml down`. Do not add `--volumes` unless you
 intend to remove its persisted data.
 
+## Cytron IRIV Edge AI
+
+The [iriv-edge](iriv-edge/README.md) folder installs the dashboard on a Cytron IRIV
+Edge AI (Raspberry Pi CM5) and adds an advisory AI service. It compares each
+channel with its own history on the CPU, and can optionally run a spectrum model
+on the AI HAT+. Its findings appear in the health panel and never drive outputs.
+
 ## Commission a device
 
 1. Configure VDS publishing to your MQTT broker and subscribe through MQTT Settings.

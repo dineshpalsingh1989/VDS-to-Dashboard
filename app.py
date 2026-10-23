@@ -33,7 +33,7 @@ import hmac
 from urllib.parse import urlsplit
 from flask import request, Response
 from vds_dashboard.runtime import atomic_json_write, normalize_event, validate_payload, decode_config, load_json_config
-from vds_dashboard.monitoring import assess_health
+from vds_dashboard.monitoring import assess_health, load_ai_findings
 from vds_dashboard.vds import normalize_packet, freshness, protocol_value
 from vds_dashboard.vds import signature, spectrum_xy
 from vds_dashboard.diagnostics import export_frame, history_figure
@@ -1525,7 +1525,7 @@ def update_health_agents(n):
     free = 100 - psutil.disk_usage(DATA_FOLDER).percent
     with closing(get_db_connection()) as conn:
         baselines = {(gid, ch): json.loads(body) for gid, ch, body in conn.execute('SELECT gateway_id,channel,snapshot FROM baselines')}
-    return [dbc.Alert([html.Strong(agent + ': '), message], color=color) for color, agent, message in assess_health(devices, status, free, baselines=baselines)]
+    return [dbc.Alert([html.Strong(agent + ': '), message], color=color) for color, agent, message in assess_health(devices, status, free, baselines=baselines) + load_ai_findings(DATA_FOLDER)]
 
 @app.callback(Output("debug-log-output", "children", allow_duplicate=True), Input("clear-log-btn", "n_clicks"), prevent_initial_call=True)
 def clear_debug_log(n_clicks):
