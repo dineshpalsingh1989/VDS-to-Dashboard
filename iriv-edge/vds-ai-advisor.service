@@ -1,6 +1,6 @@
 # Installed by iriv-edge/install.sh, which fills in @REPO@ and @DATA_DIR@.
-# Advisory only: no network, read-only historian, no access to I/O devices
-# other than the AI HAT+ (/dev/hailo0).
+# Advisory only: no network, read-only historian, no access to I/O devices,
+# low priority, at most half a CPU core and 1 GB of memory.
 [Unit]
 Description=VDS-to-Dashboard AI advisor (advisory only)
 After=docker.service
@@ -12,6 +12,11 @@ EnvironmentFile=-/etc/default/vds-ai-advisor
 ExecStart=/usr/bin/python3 @REPO@/iriv-edge/ai_advisor.py --data-dir @DATA_DIR@ $ADVISOR_ARGS
 Restart=on-failure
 RestartSec=30
+# Low priority so the dashboard and MQTT ingestion always come first.
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=1G
 # Root only to reach the Docker volume; capabilities are cut to reading/writing files.
 CapabilityBoundingSet=CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 NoNewPrivileges=yes
@@ -24,8 +29,7 @@ ReadWritePaths=@DATA_DIR@
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-DevicePolicy=closed
-DeviceAllow=/dev/hailo0 rw
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target

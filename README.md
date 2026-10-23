@@ -237,9 +237,10 @@ intend to remove its persisted data.
 ## Cytron IRIV Edge AI
 
 The [iriv-edge](iriv-edge/README.md) folder installs the dashboard on a Cytron IRIV
-Edge AI (Raspberry Pi CM5) and adds an advisory AI service. It compares each
-channel with its own history on the CPU, and can optionally run a spectrum model
-on the AI HAT+. Its findings appear in the health panel and never drive outputs.
+Edge AI (Raspberry Pi CM5) and adds a self-learning AI advisor. It learns each
+channel's normal spectrum, waveform and readings, then reports changes and matches
+them to a fault symptom library with bearing defect frequencies. Its findings appear
+in the health panel and never drive outputs.
 
 ## Commission a device
 
@@ -335,6 +336,8 @@ be re-entered in Alarm management with verified measurement settings.
 | VDS_TREND_RETENTION_DAYS | 0 | Scalar history retention |
 | VDS_RAW_RETENTION_DAYS | 0 | Waveform/spectrum retention |
 | VDS_ALARM_RETENTION_DAYS | 0 | Acknowledged alarm retention |
+| VDS_LEARNING_INTERVAL_S | 0 | Seconds between AI learning samples per channel; 0 is off |
+| VDS_LEARNING_RETENTION_HOURS | 6 | Hours each channel keeps learning samples |
 | VDS_BIND_ADDRESS | 127.0.0.1 | Compose host publication address |
 
 Use HTTPS through a reverse proxy for remote access: HTTP Basic credentials need

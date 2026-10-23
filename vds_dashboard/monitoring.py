@@ -127,11 +127,8 @@ def load_ai_findings(data_folder, now=None, max_age=600, limit=20):
         if not isinstance(item, dict):
             continue
         severity = item.get("severity") if item.get("severity") in AI_SEVERITIES else "info"
-        findings.append((severity, "AI advisor", str(item.get("message", ""))[:400]))
+        findings.append((severity, "AI advisor", str(item.get("message", ""))[:700]))
     if not findings:
-        scored = report.get("scored") or {}
-        backend = "AI HAT+" if report.get("backend") == "hailo" else "CPU"
-        findings.append(("success", "AI advisor", (
-            f"No unusual vibration ({backend}; {scored.get('metrics', 0)} metrics and "
-            f"{scored.get('spectra', 0)} spectra had enough history to compare).")))
+        summary = str(report.get("summary") or "No advisor summary available.")[:300]
+        findings.append(("success", "AI advisor", "No unusual vibration. " + summary))
     return findings

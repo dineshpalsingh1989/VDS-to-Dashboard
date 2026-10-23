@@ -1,0 +1,4 @@
+designation,type,balls,ball_diameter_mm,pitch_diameter_mm,contact_angle_deg,bpfo,bpfi,bsf,ftf,source
+6205-2RS,deep groove ball,9,7.94,39.04,0,3.5848,5.4152,2.3568,0.3983,SKF 6205-2RS JEM geometry published with the Case Western Reserve University bearing data set
+6203-2RS,deep groove ball,8,6.746,28.50,0,3.0530,4.9469,1.9937,0.3817,SKF 6203-2RS JEM geometry published with the Case Western Reserve University bearing data set
+ZA-2115,double row,16,8.407,71.501,15.17,7.0915,8.9085,4.1979,0.4432,Rexnord ZA-2115 geometry published with the NASA IMS bearing data set

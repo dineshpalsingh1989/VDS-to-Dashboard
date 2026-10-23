@@ -34,6 +34,14 @@ def setup_schema(conn):
             gateway_id TEXT, channel TEXT, snapshot TEXT NOT NULL,
             PRIMARY KEY(gateway_id, channel));
         CREATE TABLE IF NOT EXISTS maintenance_runs (day TEXT PRIMARY KEY, completed_at REAL);
+        CREATE TABLE IF NOT EXISTS learning_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, gateway_id TEXT NOT NULL, channel TEXT NOT NULL,
+            kind TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, received_ms INTEGER NOT NULL,
+            rpm REAL, data BLOB NOT NULL, sampling_freq REAL, bandwidth REAL, lines INTEGER,
+            context TEXT, UNIQUE (gateway_id, channel, kind, timestamp_ms));
+        CREATE INDEX IF NOT EXISTS idx_learning_recent
+            ON learning_samples (gateway_id, channel, kind, received_ms);
+        CREATE INDEX IF NOT EXISTS idx_learning_received ON learning_samples (received_ms);
     """)
     for table in ("trends", "trends_latest", "raw_waveforms", "raw_spectrum"):
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -93,6 +101,52 @@ def save_rule(conn, gid, channel, rule):
     )
 
 
+def learning_interval():
+    """Seconds between learning samples per channel; 0 (default) turns sampling off."""
+    try:
+        return max(0, int(os.environ.get("VDS_LEARNING_INTERVAL_S", "0")))
+    except ValueError:
+        return 0
+
+
+def learning_retention_hours():
+    """Hours a learning sample is kept; the advisor reads each one within minutes."""
+    try:
+        return max(1, int(os.environ.get("VDS_LEARNING_RETENTION_HOURS", "6")))
+    except ValueError:
+        return 6
+
+
+def store_learning_samples(conn, packet, context, interval, retention_hours=6):
+    """Keep one spectrum and one waveform per channel every interval for the AI advisor.
+
+    Bounded by design: each channel holds at most retention_hours * 3600 / interval
+    samples per kind, however many VDS units connect or how often they publish.
+    Older rows of the same channel are removed in the same transaction.
+    """
+    received_ms = int(packet["received_at"] * 1000)
+    for kind, values in (("spectrum", packet["spectrum_data"]), ("waveform", packet["waveform_data"])):
+        if values is None or len(values) == 0:
+            continue
+        last = conn.execute(
+            "SELECT MAX(received_ms) FROM learning_samples WHERE gateway_id=? AND channel=? AND kind=?",
+            (packet["gateway_id"], packet["channel"], kind),
+        ).fetchone()[0]
+        if last is not None and received_ms - last < interval * 1000:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO learning_samples (gateway_id,channel,kind,timestamp_ms,received_ms,rpm,data,"
+            "sampling_freq,bandwidth,lines,context) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (packet["gateway_id"], packet["channel"], kind, packet["timestamp_ms"], received_ms, packet["rpm"],
+             np.asarray(values, dtype="<f4").tobytes(), packet["sampling_freq"], packet["bandwidth"],
+             packet["lines"], context),
+        )
+        conn.execute(
+            "DELETE FROM learning_samples WHERE gateway_id=? AND channel=? AND kind=? AND received_ms < ?",
+            (packet["gateway_id"], packet["channel"], kind, received_ms - retention_hours * 3_600_000),
+        )
+
+
 def store_packet(conn, packet, recording=False):
     gid, channel, capture = (
         packet["gateway_id"],
@@ -145,6 +199,9 @@ def store_packet(conn, packet, recording=False):
                 capture,
             )
             accepted_metrics[metric] = value
+    interval = learning_interval()
+    if interval and not packet.get("quality_issues"):
+        store_learning_samples(conn, packet, context, interval, learning_retention_hours())
     # Scalar history is continuous; raw arrays are opt-in recording data.
     if recording and packet["waveform_data"] is not None:
         conn.execute(
@@ -249,7 +306,7 @@ def backup_database(source, destination):
     os.replace(temporary, destination)
 
 
-def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None):
+def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None, learning_hours=0):
     now = now or datetime.now()
     counts = {}
     for table, days in (
@@ -266,6 +323,12 @@ def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None):
                 (cutoff,),
             )
             counts[table] = cursor.rowcount
+    if learning_hours > 0:
+        # Catches channels that stopped publishing; active channels trim themselves.
+        counts["learning_samples"] = conn.execute(
+            "DELETE FROM learning_samples WHERE received_ms < ?",
+            (int((now - timedelta(hours=learning_hours)).timestamp() * 1000),),
+        ).rowcount
     if alarm_days > 0:
         counts["alarm_events"] = conn.execute(
             "DELETE FROM alarm_events WHERE timestamp_ms < ? AND acknowledged_at IS NOT NULL",
@@ -343,6 +406,7 @@ def maintenance_once(conn, data_folder, now=None):
         int(os.environ.get("VDS_TREND_RETENTION_DAYS", "0")),
         int(os.environ.get("VDS_RAW_RETENTION_DAYS", "0")),
         int(os.environ.get("VDS_ALARM_RETENTION_DAYS", "0")),
+        learning_hours=learning_retention_hours(),
     )
     conn.execute(
         "INSERT OR REPLACE INTO maintenance_runs VALUES (?,?)", (day, time.time())

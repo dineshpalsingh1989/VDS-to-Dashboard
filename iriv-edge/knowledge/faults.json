@@ -1,0 +1,165 @@
+{
+  "about": "Fault symptom library for the AI advisor. Each fault lists evidence found in the spectrum, the time waveform and the sensor direction. A fault is only suggested when the spectrum or waveform has CHANGED from the learned normal and the evidence matches. Frequencies: 1x = shaft speed, 2x = twice shaft speed, line = mains frequency, bpfo/bpfi/bsf/ftf = bearing defect frequencies, gmf = gear mesh (teeth x 1x), bpf = blade/vane pass (blades x 1x). A number in front multiplies, e.g. 2bpfo. Evidence marked key must match; negate means the evidence must NOT be present (for example, many running-speed harmonics rule out an electrical cause). Weights set how much each item counts.",
+  "version": 1,
+  "faults": [
+    {
+      "id": "unbalance",
+      "name": "Unbalance",
+      "requires": ["rpm"],
+      "evidence": [
+        {"type": "rise", "at": "1x", "min_db": 6, "weight": 3, "key": true},
+        {"type": "present", "at": "1x", "min_prominence_db": 15, "weight": 1},
+        {"type": "ratio", "at": "2x", "to": "1x", "max": 0.5, "weight": 1},
+        {"type": "direction", "any": ["radial", "horizontal", "vertical"], "weight": 1}
+      ],
+      "advice": "Look for material build-up, a lost balance weight, or a damaged fan or impeller. Confirm with a phase reading before balancing."
+    },
+    {
+      "id": "misalignment",
+      "name": "Shaft misalignment",
+      "requires": ["rpm"],
+      "evidence": [
+        {"type": "rise", "at": "2x", "min_db": 6, "weight": 3, "key": true},
+        {"type": "ratio", "at": "2x", "to": "1x", "min": 0.5, "weight": 2},
+        {"type": "present", "at": "3x", "min_prominence_db": 8, "weight": 1},
+        {"type": "direction", "any": ["axial"], "weight": 1}
+      ],
+      "advice": "Check coupling alignment and soft foot, especially after recent maintenance. High axial vibration supports this."
+    },
+    {
+      "id": "looseness",
+      "name": "Mechanical looseness",
+      "requires": ["rpm"],
+      "evidence": [
+        {"type": "harmonics", "of": "1x", "count": 5, "min_prominence_db": 8, "weight": 3, "key": true},
+        {"type": "present", "at": "1.5x", "min_prominence_db": 6, "weight": 1},
+        {"type": "present", "at": "2.5x", "min_prominence_db": 6, "weight": 1},
+        {"type": "rise", "at": "3x", "min_db": 6, "weight": 1},
+        {"type": "waveform", "feature": "crest", "min": 4, "weight": 1}
+      ],
+      "advice": "Check foundation and hold-down bolts, cracked bases or frames, and bearing fits in their housings."
+    },
+    {
+      "id": "bearing_outer_race",
+      "name": "Bearing outer race defect",
+      "requires": ["rpm", "bearing"],
+      "evidence": [
+        {"type": "rise", "at": "bpfo", "min_db": 6, "weight": 3, "key": true},
+        {"type": "harmonics", "of": "bpfo", "count": 2, "min_prominence_db": 6, "weight": 2},
+        {"type": "waveform", "feature": "kurtosis", "min": 4, "weight": 1}
+      ],
+      "advice": "Plan bearing inspection. Check lubrication now; outer race damage usually progresses steadily, so trend it weekly."
+    },
+    {
+      "id": "bearing_inner_race",
+      "name": "Bearing inner race defect",
+      "requires": ["rpm", "bearing"],
+      "evidence": [
+        {"type": "rise", "at": "bpfi", "min_db": 6, "weight": 3, "key": true},
+        {"type": "sidebands", "at": "bpfi", "spacing": "1x", "min_prominence_db": 6, "weight": 2},
+        {"type": "harmonics", "of": "bpfi", "count": 2, "min_prominence_db": 6, "weight": 1},
+        {"type": "waveform", "feature": "kurtosis", "min": 4, "weight": 1}
+      ],
+      "advice": "Plan bearing replacement. Inner race defects tend to progress faster than outer race defects; shorten the inspection interval."
+    },
+    {
+      "id": "bearing_rolling_element",
+      "name": "Bearing rolling element (ball/roller) defect",
+      "requires": ["rpm", "bearing"],
+      "evidence": [
+        {"type": "rise", "at": "2bsf", "min_db": 6, "weight": 3, "key": true},
+        {"type": "sidebands", "at": "2bsf", "spacing": "ftf", "min_prominence_db": 6, "weight": 2},
+        {"type": "present", "at": "bsf", "min_prominence_db": 6, "weight": 1}
+      ],
+      "advice": "Plan bearing inspection. Rolling element damage often also shows cage frequency sidebands."
+    },
+    {
+      "id": "bearing_cage",
+      "name": "Bearing cage defect",
+      "requires": ["rpm", "bearing"],
+      "evidence": [
+        {"type": "rise", "at": "ftf", "min_db": 6, "weight": 3, "key": true},
+        {"type": "harmonics", "of": "ftf", "count": 2, "min_prominence_db": 6, "weight": 1}
+      ],
+      "advice": "Cage problems can fail suddenly. Inspect soon and check lubrication."
+    },
+    {
+      "id": "bearing_unknown",
+      "name": "Possible bearing defect (bearing model unknown)",
+      "unless": ["bearing"],
+      "requires": ["rpm"],
+      "evidence": [
+        {"type": "nonsync_rise", "min_db": 8, "weight": 3, "key": true},
+        {"type": "waveform", "feature": "kurtosis", "min": 4, "weight": 1},
+        {"type": "floor_rise", "band": "upper", "min_db": 3, "weight": 1}
+      ],
+      "advice": "A new peak that is not a multiple of running speed is typical of bearing damage. Add the bearing number for this channel in knowledge/machines.json to identify which part."
+    },
+    {
+      "id": "bearing_late_stage",
+      "name": "Advanced bearing wear",
+      "requires": [],
+      "evidence": [
+        {"type": "floor_rise", "band": "upper", "min_db": 6, "weight": 3, "key": true},
+        {"type": "waveform", "feature": "kurtosis", "min": 4, "weight": 1},
+        {"type": "waveform", "feature": "crest", "min": 5, "weight": 1}
+      ],
+      "advice": "A raised high-frequency noise floor with impacts suggests widespread bearing wear. Inspect soon."
+    },
+    {
+      "id": "gear_mesh",
+      "name": "Gear wear or misalignment",
+      "requires": ["rpm", "gear_teeth"],
+      "evidence": [
+        {"type": "rise", "at": "gmf", "min_db": 6, "weight": 3, "key": true},
+        {"type": "sidebands", "at": "gmf", "spacing": "1x", "min_prominence_db": 6, "weight": 2},
+        {"type": "present", "at": "2gmf", "min_prominence_db": 6, "weight": 1}
+      ],
+      "advice": "Check gear tooth wear, backlash and lubrication. Sidebands at the speed of one shaft point to that gear."
+    },
+    {
+      "id": "blade_pass",
+      "name": "Blade or vane pass problem",
+      "requires": ["rpm", "blades"],
+      "evidence": [
+        {"type": "rise", "at": "bpf", "min_db": 6, "weight": 3, "key": true},
+        {"type": "present", "at": "2bpf", "min_prominence_db": 6, "weight": 1}
+      ],
+      "advice": "Check impeller or fan clearance to the casing or cutwater, flow conditions, and blade damage."
+    },
+    {
+      "id": "electrical",
+      "name": "Electrical fault in the motor",
+      "requires": ["line_frequency"],
+      "machine_types": ["motor"],
+      "evidence": [
+        {"type": "rise", "at": "2line", "min_db": 6, "weight": 3, "key": true},
+        {"type": "present", "at": "2line", "min_prominence_db": 10, "weight": 1},
+        {"type": "harmonics", "of": "1x", "count": 4, "min_prominence_db": 8, "negate": true, "weight": 2, "key": true}
+      ],
+      "advice": "Twice line frequency suggests stator, air gap or supply problems. Check phase currents. On 2-pole motors this is close to 2x running speed; a longer spectrum resolution separates them."
+    },
+    {
+      "id": "cavitation",
+      "name": "Cavitation or flow turbulence",
+      "requires": [],
+      "machine_types": ["pump"],
+      "evidence": [
+        {"type": "floor_rise", "band": "all", "min_db": 4, "weight": 3, "key": true},
+        {"type": "waveform", "feature": "kurtosis", "max": 4, "weight": 1}
+      ],
+      "advice": "Check suction pressure, strainers and valve positions, and whether the pump runs far from its best efficiency point."
+    },
+    {
+      "id": "impacting",
+      "name": "Impacting or rubbing",
+      "requires": [],
+      "evidence": [
+        {"type": "waveform_rise", "feature": "kurtosis", "min_change": 1.5, "weight": 3, "key": true},
+        {"type": "waveform", "feature": "crest", "min": 5, "weight": 1},
+        {"type": "floor_rise", "band": "upper", "min_db": 3, "weight": 1}
+      ],
+      "advice": "Impacts in the waveform come from bearing damage, looseness or rubbing parts. Listen to the machine and check the bearings and guards."
+    }
+  ]
+}

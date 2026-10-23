@@ -1,126 +1,300 @@
-"""IRIV Edge AI advisor: read-only scoring and dashboard display, on temporary databases."""
+"""IRIV Edge AI self-learning advisor, on temporary databases only."""
 
-import importlib.util
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
 import time
 import unittest
 from contextlib import closing
-from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
 
 import app
+from vds_dashboard import historian
 from vds_dashboard.monitoring import load_ai_findings
 
 ADVISOR_DIR = Path(__file__).resolve().parent.parent / "iriv-edge"
 sys.path.insert(0, str(ADVISOR_DIR))
-spec = importlib.util.spec_from_file_location("ai_advisor", ADVISOR_DIR / "ai_advisor.py")
-advisor = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(advisor)
+import ai_advisor  # noqa: E402
+import bearing_tool  # noqa: E402
+from symptoms import bearing_orders, load_bearings  # noqa: E402
 
-NOW = datetime(2026, 10, 1, 12, 0, 0)
-VELOCITY = {"unit": "mm/s", "filter": "10Hz-1kHz", "detection": "RMS"}
+RPM = 1500                      # 25 Hz shaft speed
+BANDWIDTH, LINES = 1000.0, 800  # 1.25 Hz resolution
+START_MS = 1_790_000_000_000
+STEP_MS = 600_000               # one learning sample every 10 minutes
+CONTEXT = json.dumps({"sensor_type": "Acceleration(g)", "sensitivity": 100, "window": "hann"})
+BPFO_6205 = 3.5848
+
+
+def spectrum(rng, fault=False, loose=False):
+    values = 1e-4 * (1 + 0.2 * rng.random(LINES + 1))
+    line = lambda hz: int(round(hz / (BANDWIDTH / LINES)))  # noqa: E731
+    values[line(25)] = 1e-2
+    values[line(50)] = 2e-3
+    if fault:
+        values[line(BPFO_6205 * 25)] = 6e-3
+        values[line(2 * BPFO_6205 * 25)] = 2e-3
+    if loose:
+        for k in range(3, 9):
+            values[line(25 * k)] = 3e-3
+        values[line(37.5)] = values[line(62.5)] = 1.5e-3
+    return values
+
+
+def waveform(rng, impacts=False):
+    t = np.arange(4096) / 4096
+    x = np.sin(2 * np.pi * 25 * t) + 0.2 * rng.standard_normal(t.size)
+    if impacts:
+        x[::200] += 8
+    return x
 
 
 class AdvisorTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
-        self.database = os.path.join(self.directory.name, "vibration_trends.db")
-        self.patch = patch.object(app, "DB_FILE", self.database)
+        self.data = Path(self.directory.name)
+        self.patch = patch.object(app, "DB_FILE", str(self.data / "vibration_trends.db"))
         self.patch.start()
         app.setup_database()
+        self.knowledge = self.data / "knowledge"
+        shutil.copytree(ADVISOR_DIR / "knowledge", self.knowledge)
+        self.machines({"GW1/1": {"name": "Fan F-1 motor DE", "machine_type": "motor", "bearing": "6205-2RS",
+                                 "direction": "radial", "iso_class": "group2_rigid"}})
+        self.rng = np.random.default_rng(7)
+        self.ms = START_MS
+        self.opened = []
 
     def tearDown(self):
+        for advisor in self.opened:
+            advisor.store.conn.close()
         self.patch.stop()
         self.directory.cleanup()
 
-    def add_metric(self, history, latest, rpm=1200, latest_rpm=None, metadata=VELOCITY, latest_metadata=None):
-        rng = np.random.default_rng(1)
-        with closing(app.get_db_connection()) as conn, conn:
-            for index, value in enumerate(history + rng.normal(0, 0.05, len(history))):
-                stamp = advisor.db_time(NOW - timedelta(minutes=index + 1))
-                conn.execute("INSERT INTO trends (timestamp,gateway_id,channel,metric_name,value,rpm,context) VALUES (?,?,?,?,?,?,?)",
-                             (stamp, "GW1", "1", "Velocity", float(value), rpm, json.dumps(dict(metadata, timestamp_ms=index))))
-            context = json.dumps(dict(latest_metadata or metadata, timestamp_ms=0))
-            conn.execute("INSERT INTO trends_latest (gateway_id,channel,metric_name,value,rpm,timestamp,context) VALUES (?,?,?,?,?,?,?)",
-                         ("GW1", "1", "Velocity", latest, latest_rpm or rpm, advisor.db_time(NOW), context))
+    def machines(self, channels):
+        (self.knowledge / "machines.json").write_text(json.dumps({"defaults": {"line_frequency_hz": 50},
+                                                                  "channels": channels}))
 
-    def add_spectra(self, count, latest_peak):
-        rng = np.random.default_rng(2)
-        context = json.dumps({"sensor_type": "Acceleration(g)", "sensitivity": 100, "sampling_freq": 2560, "window": "hann"})
-        with closing(app.get_db_connection()) as conn, conn:
-            for index in range(count + 1):
-                values = 1e-4 * (1 + 0.1 * rng.random(801))
-                values[100] = 1e-2  # running-speed peak present in every recording
-                if index == 0 and latest_peak:
-                    values[400] = 5e-2  # new peak near 500 Hz in the newest recording
-                conn.execute("INSERT INTO raw_spectrum (gateway_id,channel,timestamp,spectrum_data,bandwidth,lines,context) VALUES (?,?,?,?,?,?,?)",
-                             ("GW1", "2", advisor.db_time(NOW - timedelta(minutes=10 * index)),
-                              np.asarray(values, "<f8").tobytes(), 1000, 800, context))
+    def advisor(self):
+        advisor = ai_advisor.Advisor(self.data, self.knowledge, learn_samples=10, learn_hours=1)
+        self.opened.append(advisor)
+        return advisor
 
-    def test_metric_jump_is_reported_with_context(self):
-        self.add_metric(np.full(40, 2.5), latest=8.0)
-        report = advisor.analyse(self.database, now=NOW)
-        self.assertEqual(report["scored"]["metrics"], 1)
-        [finding] = report["findings"]
+    def add(self, kind, values, gid="GW1", ch="1", rpm=RPM):
+        with closing(app.get_db_connection()) as conn, conn:
+            conn.execute(
+                "INSERT INTO learning_samples (gateway_id,channel,kind,timestamp_ms,received_ms,rpm,data,"
+                "sampling_freq,bandwidth,lines,context) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (gid, ch, kind, self.ms, self.ms, rpm, np.asarray(values, "<f4").tobytes(), 4096,
+                 BANDWIDTH, LINES, CONTEXT))
+
+    def run_samples(self, count, **kinds):
+        for _ in range(count):
+            self.add("spectrum", spectrum(self.rng, kinds.get("fault"), kinds.get("loose")))
+            self.add("waveform", waveform(self.rng, kinds.get("impacts")))
+            self.ms += STEP_MS
+
+    def cycle(self, advisor):
+        return advisor.cycle(now_ms=self.ms)
+
+    def test_learns_first_and_stays_quiet_on_normal_running(self):
+        advisor = self.advisor()
+        self.run_samples(5)
+        report = self.cycle(advisor)
+        self.assertEqual(report["channels"], {"monitoring": 0, "learning": 1})
+        self.assertEqual(report["findings"], [])
+        self.run_samples(20)
+        report = self.cycle(advisor)
+        self.assertEqual(report["channels"], {"monitoring": 1, "learning": 0})
+        self.assertEqual(report["findings"], [])
+        self.assertIn("Monitoring 1 channels", report["summary"])
+
+    def test_outer_race_fault_is_found_and_named_with_bearing(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(1, fault=True)
+        self.assertEqual(self.cycle(advisor)["findings"], [], "one changed sample is not enough")
+        self.run_samples(1, fault=True)
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertEqual(finding["kind"], "spectrum")
+        self.assertIn("Fan F-1 motor DE (GW1 CH1)", finding["message"])
+        self.assertIn("Likely Bearing outer race defect (6205-2RS)", finding["message"])
+        self.assertIn("peak at 90.0 Hz (3.60x)", finding["message"])
         self.assertEqual(finding["severity"], "warning")
-        self.assertIn("GW1 CH1 Velocity", finding["message"])
-        self.assertIn("above", finding["message"])
+        self.assertEqual(finding["detail"]["matches"][0]["id"], "bearing_outer_race")
 
-    def test_normal_reading_is_quiet(self):
-        self.add_metric(np.full(40, 2.5), latest=2.52)
-        self.assertEqual(advisor.analyse(self.database, now=NOW)["findings"], [])
+    def test_fault_is_not_learned_as_normal(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(30, fault=True)
+        self.assertEqual(len(self.cycle(advisor)["findings"]), 1)
 
-    def test_changed_measurement_settings_are_not_compared(self):
-        changed = dict(VELOCITY, filter="2Hz-1kHz")
-        self.add_metric(np.full(40, 2.5), latest=8.0, latest_metadata=changed)
-        report = advisor.analyse(self.database, now=NOW)
-        self.assertEqual((report["scored"]["metrics"], report["findings"]), (0, []))
+    def test_unknown_bearing_still_flags_non_synchronous_peak(self):
+        self.machines({})
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(2, fault=True)
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertIn("Possible bearing defect (bearing model unknown)", finding["message"])
+        self.assertIn("machines.json", finding["message"])
 
-    def test_different_speed_is_not_compared(self):
-        self.add_metric(np.full(40, 2.5), latest=8.0, rpm=1200, latest_rpm=1800)
-        self.assertEqual(advisor.analyse(self.database, now=NOW)["scored"]["metrics"], 0)
+    def test_bearing_number_typed_in_asset_registry_is_used(self):
+        self.machines({})
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_asset(conn, "GW1", "1", {"machine": "Fan F-1", "location": "DE bearing 6205-2RS",
+                                                    "direction": "radial", "publish_interval": 60})
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(2, fault=True)
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertIn("Bearing outer race defect (6205-2RS)", finding["message"])
 
-    def test_new_spectral_peak_is_located(self):
-        self.add_spectra(15, latest_peak=True)
-        report = advisor.analyse(self.database, now=NOW)
-        self.assertEqual(report["scored"]["spectra"], 1)
-        [finding] = report["findings"]
-        self.assertIn("GW1 CH2 spectrum", finding["message"])
-        self.assertRegex(finding["message"], r"near 49\d Hz|near 50\d Hz")
+    def test_looseness_pattern_is_recognised(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(2, loose=True)
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertIn("Likely Mechanical looseness", finding["message"])
 
-    def test_steady_spectrum_is_quiet(self):
-        self.add_spectra(15, latest_peak=False)
-        self.assertEqual(advisor.analyse(self.database, now=NOW)["findings"], [])
+    def test_waveform_impacts_are_reported(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(2, impacts=True)
+        findings = self.cycle(advisor)["findings"]
+        waveform_finding = next(f for f in findings if f["kind"] == "waveform")
+        self.assertIn("kurtosis", waveform_finding["message"])
+        self.assertIn("bearing damage, looseness or rubbing", waveform_finding["message"])
 
-    def test_model_backend_uses_reconstruction_error(self):
-        class FakeModel:
-            name = "test"
+    def test_change_clears_after_recovery_and_relearn_forgets(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.run_samples(2, fault=True)
+        self.assertTrue(self.cycle(advisor)["findings"])
+        self.run_samples(3)
+        self.assertEqual(self.cycle(advisor)["findings"], [])
+        advisor.store.forget("GW1", "1")
+        self.run_samples(1)
+        self.assertEqual(self.cycle(advisor)["channels"], {"monitoring": 0, "learning": 1})
 
-            def reconstruction_error(self, features):
-                return np.r_[np.full(len(features) - 1, 1.0) + np.linspace(0, 0.01, len(features) - 1), 9.0]
+    def test_overall_metric_jump_and_iso_zone(self):
+        advisor = self.advisor()
+        meta = json.dumps({"unit": "mm/s", "filter": "10Hz-1kHz", "detection": "RMS", "timestamp_ms": 0})
+        with closing(app.get_db_connection()) as conn, conn:
+            for i in range(30):
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime((START_MS + i * STEP_MS) / 1000))
+                value = 5.0 if i >= 28 else 1.2 + 0.02 * (i % 3)
+                conn.execute("INSERT INTO trends (timestamp,gateway_id,channel,metric_name,value,rpm,context) "
+                             "VALUES (?,?,?,?,?,?,?)", (stamp, "GW1", "1", "Velocity", value, RPM, meta))
+            conn.execute("INSERT INTO trends_latest (gateway_id,channel,metric_name,value,rpm,timestamp,context) "
+                         "VALUES (?,?,?,?,?,?,?)", ("GW1", "1", "Velocity", 5.0, RPM, stamp, meta))
+        self.ms = START_MS + 29 * STEP_MS
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertIn("Velocity is 5 mm/s", finding["message"])
+        self.assertIn("ISO zone D", finding["message"])
+        self.assertEqual(finding["severity"], "warning")
 
-        self.add_spectra(15, latest_peak=False)
-        [finding] = advisor.analyse(self.database, now=NOW, model=FakeModel())["findings"]
-        self.assertIn("test model", finding["message"])
+    def test_work_is_incremental_and_resumes_after_restart(self):
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.assertEqual(self.cycle(advisor)["summary"].split(";")[1].split()[0], "30")
+        self.assertIn("; 0 new samples", self.cycle(advisor)["summary"])
+        advisor.store.close()
+        self.run_samples(1)
+        self.assertIn("; 2 new samples", self.cycle(self.advisor())["summary"])
 
-    def test_historian_connection_is_read_only(self):
-        with closing(advisor.connect_readonly(self.database)) as conn:
+    def test_historian_is_opened_read_only(self):
+        with closing(ai_advisor.connect_readonly(self.data / "vibration_trends.db")) as conn:
             with self.assertRaises(sqlite3.OperationalError):
                 conn.execute("DELETE FROM trends")
 
     def test_waits_for_dashboard_without_creating_database_files(self):
-        data = os.path.join(self.directory.name, "empty")
-        advisor.main(["--data-dir", data, "--once"])
-        self.assertEqual(sorted(os.listdir(data)), ["ai"])
-        report = json.loads(Path(data, "ai", "findings.json").read_text())
+        empty = self.data / "empty"
+        ai_advisor.main(["--data-dir", str(empty), "--knowledge", str(self.knowledge), "--once"])
+        self.assertEqual(sorted(os.listdir(empty)), ["ai"])
+        report = json.loads((empty / "ai" / "findings.json").read_text())
         self.assertIn("Waiting for the dashboard", report["error"])
+
+
+class LearningSampleTests(unittest.TestCase):
+    """The dashboard keeps a bounded number of samples for the advisor."""
+
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        historian.setup_schema(self.conn)
+
+    def packet(self, received_at, timestamp_ms):
+        return {"gateway_id": "GW1", "channel": "1", "timestamp_ms": timestamp_ms, "received_at": received_at,
+                "rpm": RPM, "spectrum_data": [0.0, 1.0, 2.0], "waveform_data": [0.0, 1.0, -1.0],
+                "sampling_freq": 4, "bandwidth": 2, "lines": 2}
+
+    def count(self):
+        return self.conn.execute("SELECT kind, COUNT(*) FROM learning_samples GROUP BY kind").fetchall()
+
+    def test_one_sample_per_interval_per_kind(self):
+        for second in (0, 60, 300, 599):
+            historian.store_learning_samples(self.conn, self.packet(1000 + second, second), "{}", 600)
+        self.assertEqual(self.count(), [("spectrum", 1), ("waveform", 1)])
+        historian.store_learning_samples(self.conn, self.packet(1600, 600_000), "{}", 600)
+        self.assertEqual(self.count(), [("spectrum", 2), ("waveform", 2)])
+
+    def test_each_channel_keeps_only_its_retention_window(self):
+        for step in range(50):
+            historian.store_learning_samples(self.conn, self.packet(step * 600, step), "{}", 600, retention_hours=6)
+        self.assertEqual(self.count(), [("spectrum", 37), ("waveform", 37)])
+
+    def test_disabled_unless_configured(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VDS_LEARNING_INTERVAL_S", None)
+            self.assertEqual(historian.learning_interval(), 0)
+        with patch.dict(os.environ, {"VDS_LEARNING_INTERVAL_S": "600"}):
+            self.assertEqual(historian.learning_interval(), 600)
+
+    def test_old_samples_are_pruned(self):
+        received = START_MS / 1000
+        historian.store_learning_samples(self.conn, self.packet(received, 1), "{}", 600)
+        from datetime import datetime, timedelta
+        counts = historian.prune_history(self.conn, now=datetime.fromtimestamp(received) + timedelta(hours=7),
+                                         learning_hours=6)
+        self.assertEqual(counts["learning_samples"], 2)
+
+
+class KnowledgeTests(unittest.TestCase):
+    def test_bearing_formula_matches_published_frequencies(self):
+        orders = bearing_orders(9, 7.94, 39.04)
+        published = load_bearings(ADVISOR_DIR / "knowledge" / "bearings.csv")["6205"]
+        for key in ("bpfo", "bpfi", "bsf", "ftf"):
+            self.assertAlmostEqual(orders[key], published[key], places=2)
+
+    def test_bearing_tool_adds_a_bearing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "bearings.csv")
+            shutil.copy(ADVISOR_DIR / "knowledge" / "bearings.csv", path)
+            bearing_tool.main(["TEST-1", "--orders", "3.1", "4.9", "2.0", "0.4", "--file", str(path)])
+            self.assertAlmostEqual(load_bearings(path)["TEST"]["bpfi"], 4.9)
+            with self.assertRaises(SystemExit):
+                bearing_tool.main(["TEST-1", "--orders", "3.1", "4.9", "2.0", "0.4", "--file", str(path)])
+
+    def test_every_fault_rule_uses_known_evidence(self):
+        faults = json.loads((ADVISOR_DIR / "knowledge" / "faults.json").read_text())["faults"]
+        known = {"rise", "present", "ratio", "harmonics", "sidebands", "floor_rise", "nonsync_rise",
+                 "waveform", "waveform_rise", "direction"}
+        for fault in faults:
+            self.assertTrue(any(e.get("key") for e in fault["evidence"]), fault["id"])
+            for item in fault["evidence"]:
+                self.assertIn(item["type"], known, fault["id"])
 
 
 class DashboardDisplayTests(unittest.TestCase):
@@ -131,28 +305,25 @@ class DashboardDisplayTests(unittest.TestCase):
     def tearDown(self):
         self.directory.cleanup()
 
-    def write(self, report):
-        advisor.write_report(self.data, report)
-
     def test_missing_report_shows_nothing(self):
         self.assertEqual(load_ai_findings(self.data), [])
 
     def test_findings_are_capped_at_warning_and_truncated(self):
-        self.write({"generated_at": time.time(), "findings": [
+        ai_advisor.write_report(self.data, {"generated_at": time.time(), "findings": [
             {"severity": "danger", "message": "x" * 1000}, {"severity": "warning", "message": "check CH1"}]})
         findings = load_ai_findings(self.data)
         self.assertEqual([f[0] for f in findings], ["info", "warning"])
-        self.assertEqual(len(findings[0][2]), 400)
+        self.assertEqual(len(findings[0][2]), 700)
 
-    def test_quiet_report_says_what_was_compared(self):
-        self.write({"generated_at": time.time(), "backend": "hailo", "findings": [],
-                    "scored": {"metrics": 3, "spectra": 1}})
+    def test_quiet_report_shows_learning_summary(self):
+        ai_advisor.write_report(self.data, {"generated_at": time.time(), "findings": [],
+                                            "summary": "Monitoring 3 channels, still learning 1"})
         [(severity, agent, message)] = load_ai_findings(self.data)
         self.assertEqual((severity, agent), ("success", "AI advisor"))
-        self.assertIn("AI HAT+; 3 metrics and 1 spectra", message)
+        self.assertIn("Monitoring 3 channels, still learning 1", message)
 
     def test_stale_or_broken_report_is_flagged(self):
-        self.write({"generated_at": time.time() - 3600, "findings": []})
+        ai_advisor.write_report(self.data, {"generated_at": time.time() - 3600, "findings": []})
         self.assertIn("No AI advisor update", load_ai_findings(self.data)[0][2])
         Path(self.data, "ai", "findings.json").write_text("{not json")
         self.assertEqual(load_ai_findings(self.data)[0][0], "warning")

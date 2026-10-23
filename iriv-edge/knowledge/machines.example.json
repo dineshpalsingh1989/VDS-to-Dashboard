@@ -1,0 +1,27 @@
+{
+  "about": "Copy this file to machines.json and describe each VDS channel as GATEWAY_ID/CHANNEL. Every field is optional. bearing is a designation from bearings.csv, or the four defect frequencies as multiples of shaft speed. machine_type: motor, pump, fan, gearbox, compressor or other. direction: radial, horizontal, vertical or axial. iso_class: a class from severity.json.",
+  "defaults": {
+    "line_frequency_hz": 50
+  },
+  "channels": {
+    "VDS-DEMO/1": {
+      "name": "Pump P-101 motor, drive end",
+      "machine_type": "motor",
+      "bearing": "6205-2RS",
+      "direction": "radial",
+      "iso_class": "group2_rigid"
+    },
+    "VDS-DEMO/2": {
+      "name": "Pump P-101 pump, non-drive end",
+      "machine_type": "pump",
+      "bearing": {"bpfo": 3.053, "bpfi": 4.947, "bsf": 1.994, "ftf": 0.382},
+      "blades": 6,
+      "direction": "axial"
+    },
+    "VDS-DEMO/3": {
+      "name": "Conveyor gearbox input",
+      "machine_type": "gearbox",
+      "gear_teeth": 23
+    }
+  }
+}
