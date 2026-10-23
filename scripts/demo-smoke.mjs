@@ -24,7 +24,7 @@ try {
   const {call,evaluate,until}=browser;
   await call('Page.navigate',{url});
   await until('document.body.dataset.demoReady === "/"');
-  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),15);
+  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
   assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
   assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std Deviation:'));
   assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
@@ -43,7 +43,7 @@ try {
   assert((await evaluate('document.querySelector("#demo-modal-title").textContent')).includes('Waveform'));
   await evaluate('document.querySelector("#demo-graph-modal .btn-close").click()');
   assert.equal(await evaluate('Boolean(document.querySelector("#demo-graph-modal"))'),false);
-  const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua','/ai'];
+  const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
   async function navigate(route) {
     await evaluate(`location.hash=${JSON.stringify(route)}`);
     try { await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`); }
@@ -57,7 +57,7 @@ try {
       await writeFile(screenshot,Buffer.from(image.data,'base64'));
     }
   }
-  for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch'],['/ai','ai-save']]) {
+  for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch']]) {
     await navigate(route);assert(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`),id+' must be disabled');
   }
   await navigate('/diagnostics');
@@ -103,7 +103,7 @@ try {
     await writeFile(process.env.DEMO_MOBILE_SCREENSHOT,Buffer.from(image.data,'base64'));
   }
   assert.deepEqual(browser.errors,[],'No browser errors or CSP violations');
-  console.log('Passed: actual layout, 15 routes, trend switches, metric selection, waveform dialog, order axis, CSV, disabled actions, and mobile views.');
+  console.log('Passed: actual layout, 14 routes, trend switches, metric selection, waveform dialog, order axis, CSV, disabled actions, and mobile views.');
 } finally {
   await browser?.close();await new Promise(resolve=>server.close(resolve));
 }

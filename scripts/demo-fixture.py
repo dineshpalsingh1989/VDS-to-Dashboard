@@ -49,13 +49,6 @@ with closing(app.get_db_connection()) as conn, conn:
         ))
     historian.save_rule(conn, gid, "1", dict(enabled=True, metric="Velocity", warn=3,
                                             alert=5, hysteresis=.3, persistence=2, metadata=meta))
-    historian.save_ai_gateway(conn, gid, True)
-    for ch, location in (("1", "Motor drive end"), ("2", "Motor drive end"), ("3", "Pump bearing"), ("4", "Pump bearing")):
-        historian.save_ai_channel(conn, gid, ch, dict(
-            machine="Cooling water pump P-103", location=location, machine_type="motor" if ch in ("1", "2") else "pump",
-            direction={"1": "horizontal", "2": "vertical", "3": "axial", "4": "horizontal"}[ch],
-            bearing="6205-2RS" if ch in ("1", "2") else "", speed_source="vds", line_frequency_hz=50,
-            blades=None if ch in ("1", "2") else 6, iso_class="group2_rigid"))
 
 app.active_jobs[gid] = {"job_id": "synthetic-demo", "end_time": datetime.now() + timedelta(hours=1)}
 normalizer = app.normalize_packet
@@ -99,14 +92,6 @@ with closing(app.get_db_connection()) as conn, conn:
         conn.execute("INSERT OR REPLACE INTO baselines VALUES (?,?,?)", (gid, ch, json.dumps(baseline)))
     conn.execute("INSERT OR REPLACE INTO recording_jobs VALUES (?,?,?,?,?,?)",
                  ("synthetic-demo", gid, datetime.now() - timedelta(minutes=12), datetime.now() + timedelta(hours=1), 1, "active"))
-
-# Run the real AI advisor once over the synthetic data, so the AI page shows genuine
-# learning progress. Fake mount tables keep it away from the exporting host's disks.
-sys.path.insert(0, str(root / "iriv-edge"))
-from ai_advisor import Advisor, write_report  # noqa: E402
-advisor = Advisor(os.environ["VDS_DATA_DIR"], mounts_file=fixture_root / "no-mounts", sys_block=fixture_root / "no-sys")
-write_report(os.environ["VDS_DATA_DIR"], advisor.cycle())
-advisor.close()
 
 # These functions supply demonstration host information, never the exporting host.
 app.get_ip_address = lambda: "192.0.2.10"

@@ -38,7 +38,9 @@ jobs:
       - name: Unit and integration tests (no hardware)
         run: python -m unittest discover -s tests -v
       - name: Linux launcher syntax
-        run: bash -n scripts/linux-start.sh scripts/container-smoke.sh iriv-edge/install.sh
+        run: bash -n scripts/linux-start.sh scripts/container-smoke.sh iriv-edge/install.sh iriv-edge/setup-ssd.sh
+      - name: IRIV Edge AI demo (simulated plant, no hardware)
+        run: python iriv-edge/demo/run_demo.py --days 2 --no-server --data-dir "$RUNNER_TEMP/iriv-demo"
 
   container:
     name: Linux container smoke test

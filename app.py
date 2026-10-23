@@ -1188,7 +1188,8 @@ sidebar = html.Div([
         dbc.NavLink('Alarm management', href='/alarms', active='exact', className='text-white'),
         dbc.NavLink('Vibration diagnostics', href='/diagnostics', active='exact', className='text-white'),
         dbc.NavLink('Reports and backups', href='/reports', active='exact', className='text-white'),
-        dbc.NavLink([html.I(className="fas fa-brain me-2"), "AI analysis"], href="/ai", active="exact", className="text-white"),
+        *([dbc.NavLink([html.I(className="fas fa-brain me-2"), "AI analysis"], href="/ai", active="exact", className="text-white")]
+          if historian.edge_ai_enabled() else []),  # IRIV Edge AI installs only
         dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"), 
@@ -1497,8 +1498,9 @@ def refresh_live_data(message):
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
     pages = {'/assets': workspace_views.assets_page, '/alarms': workspace_views.alarms_page,
-             '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page,
-             '/ai': ai_views.ai_page}
+             '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page}
+    if pathname == '/ai' and historian.edge_ai_enabled():
+        return ai_views.ai_page()
     if pathname in pages:
         return pages[pathname]()
     if pathname == '/health':
@@ -1528,7 +1530,7 @@ def update_health_agents(n):
     free = 100 - psutil.disk_usage(DATA_FOLDER).percent
     with closing(get_db_connection()) as conn:
         baselines = {(gid, ch): json.loads(body) for gid, ch, body in conn.execute('SELECT gateway_id,channel,snapshot FROM baselines')}
-    return [dbc.Alert([html.Strong(agent + ': '), message], color=color) for color, agent, message in assess_health(devices, status, free, baselines=baselines) + load_ai_findings(DATA_FOLDER)]
+    return [dbc.Alert([html.Strong(agent + ': '), message], color=color) for color, agent, message in assess_health(devices, status, free, baselines=baselines) + (load_ai_findings(DATA_FOLDER) if historian.edge_ai_enabled() else [])]
 
 @app.callback(Output("debug-log-output", "children", allow_duplicate=True), Input("clear-log-btn", "n_clicks"), prevent_initial_call=True)
 def clear_debug_log(n_clicks):

@@ -1,7 +1,9 @@
 """Durable VDS context, asset configuration, alarms, and maintenance."""
 
 import json
+import math
 import os
+import re
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -45,6 +47,11 @@ def setup_schema(conn):
         CREATE TABLE IF NOT EXISTS ai_settings (
             gateway_id TEXT, channel TEXT, settings TEXT NOT NULL,
             PRIMARY KEY (gateway_id, channel));
+        CREATE TABLE IF NOT EXISTS ai_bearings (designation TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS ai_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, gateway_id TEXT NOT NULL, channel TEXT NOT NULL,
+            kind TEXT NOT NULL, since_ms INTEGER, fault_id TEXT, verdict TEXT NOT NULL,
+            user TEXT, created REAL NOT NULL);
     """)
     for table in ("trends", "trends_latest", "raw_waveforms", "raw_spectrum"):
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -107,6 +114,11 @@ def save_rule(conn, gid, channel, rule):
 AI_MACHINE_TYPES = ("motor", "pump", "fan", "gearbox", "compressor", "other")
 AI_DIRECTIONS = ("radial", "horizontal", "vertical", "axial")
 AI_ISO_CLASSES = ("group1_rigid", "group1_flexible", "group2_rigid", "group2_flexible")
+
+
+def edge_ai_enabled():
+    """AI features exist only on IRIV Edge AI installs; iriv-edge/install.sh sets VDS_EDGE_AI=1."""
+    return os.environ.get("VDS_EDGE_AI", "").strip().lower() in ("1", "true", "yes")
 
 
 def ai_enabled(conn, gid):
@@ -177,6 +189,75 @@ def request_ai_relearn(conn, gid, channel, now=None):
     settings = ai_channel_settings(conn, gid, channel)
     settings["relearn_at"] = time.time() if now is None else now
     conn.execute("INSERT OR REPLACE INTO ai_settings VALUES (?,?,?)", (gid, channel, json.dumps(settings)))
+
+
+AI_VERDICTS = ("confirmed", "wrong", "repaired")
+
+
+def bearing_orders(balls, ball_diameter, pitch_diameter, contact_angle_deg=0.0):
+    """Bearing defect frequencies as multiples of shaft speed (stationary outer ring)."""
+    r = ball_diameter / pitch_diameter * math.cos(math.radians(contact_angle_deg))
+    return {
+        "bpfo": balls / 2 * (1 - r),
+        "bpfi": balls / 2 * (1 + r),
+        "bsf": pitch_diameter / (2 * ball_diameter) * (1 - r * r),
+        "ftf": 0.5 * (1 - r),
+    }
+
+
+def _number(form, key, low, high, label):
+    try:
+        value = float(form.get(key))
+    except (TypeError, ValueError):
+        raise ValueError(f"Enter {label}") from None
+    if not low <= value <= high:
+        raise ValueError(f"{label.capitalize()} must be between {low:g} and {high:g}")
+    return value
+
+
+def save_ai_bearing(conn, designation, form):
+    """Add a bearing from its catalogue geometry or its published defect frequencies."""
+    designation = str(designation or "").strip().upper()
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9 ./-]{1,31}", designation):
+        raise ValueError("Bearing number: 2-32 letters, digits, spaces, dots, slashes or dashes")
+    if form.get("mode") == "geometry":
+        balls = _number(form, "balls", 3, 60, "the number of balls or rollers")
+        ball = _number(form, "ball_diameter_mm", 0.5, 200, "the ball diameter in mm")
+        pitch = _number(form, "pitch_diameter_mm", 2, 2000, "the pitch diameter in mm")
+        angle = _number(form, "contact_angle_deg", 0, 45, "the contact angle") if form.get("contact_angle_deg") not in (None, "") else 0.0
+        if ball >= pitch:
+            raise ValueError("The pitch diameter must be larger than the ball diameter")
+        orders = bearing_orders(int(balls), ball, pitch, angle)
+        geometry = {"balls": int(balls), "ball_diameter_mm": ball, "pitch_diameter_mm": pitch, "contact_angle_deg": angle}
+    else:
+        orders = {key: _number(form, key, low, high, key.upper()) for key, low, high in (
+            ("bpfo", 0.5, 40), ("bpfi", 0.5, 40), ("bsf", 0.2, 30), ("ftf", 0.1, 0.9))}
+        if orders["bpfi"] <= orders["bpfo"]:
+            raise ValueError("BPFI is always larger than BPFO; check the values")
+        geometry = {}
+    data = dict(designation=designation, **{k: round(v, 4) for k, v in orders.items()}, **geometry,
+                source=str(form.get("source") or "Added in the dashboard").strip()[:120], added=time.time())
+    conn.execute("INSERT OR REPLACE INTO ai_bearings VALUES (?,?)", (designation, json.dumps(data)))
+    return data
+
+
+def ai_bearings(conn):
+    return [json.loads(row[0]) for row in conn.execute("SELECT data FROM ai_bearings ORDER BY designation")]
+
+
+def save_ai_feedback(conn, gid, channel, kind, since_ms, fault_id, verdict, user=""):
+    """Record what a person found when checking an AI finding."""
+    if verdict not in AI_VERDICTS:
+        raise ValueError("Unknown feedback")
+    if channel not in ("1", "2", "3", "4") or not gid:
+        raise ValueError("Invalid channel")
+    if not re.fullmatch(r"spectrum|envelope|waveform|severity|metric:[A-Za-z]{1,40}", str(kind)):
+        raise ValueError("Unknown finding type")
+    cursor = conn.execute(
+        "INSERT INTO ai_feedback (gateway_id,channel,kind,since_ms,fault_id,verdict,user,created) VALUES (?,?,?,?,?,?,?,?)",
+        (gid, channel, kind, int(since_ms) if since_ms else None, str(fault_id or "")[:64] or None, verdict,
+         str(user or "")[:64], time.time()))
+    return cursor.lastrowid
 
 
 def learning_interval():
@@ -278,7 +359,7 @@ def store_packet(conn, packet, recording=False):
             )
             accepted_metrics[metric] = value
     interval = learning_interval()
-    if interval and not packet.get("quality_issues") and ai_enabled(conn, gid):
+    if interval and edge_ai_enabled() and not packet.get("quality_issues") and ai_enabled(conn, gid):
         store_learning_samples(conn, packet, context, interval, learning_retention_hours())
     # Scalar history is continuous; raw arrays are opt-in recording data.
     if recording and packet["waveform_data"] is not None:

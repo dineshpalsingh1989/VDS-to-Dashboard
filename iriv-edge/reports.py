@@ -12,6 +12,7 @@ The dashboard shows the latest reports from <data>/ai/index.json, which is kept
 next to the dashboard even when the folders themselves live on the SSD.
 """
 
+import csv
 import json
 import os
 import re
@@ -67,7 +68,8 @@ def markdown(finding, info):
         "## Files in this folder",
         "",
         "- `finding.json`: this finding as data.",
-        "- `spectrum.csv`: current and learned-normal level per frequency, if a spectrum was involved.",
+        "- `spectrum.csv` or `envelope.csv`: current and learned-normal level per frequency.",
+        "- `fault_frequencies.csv`: every fault frequency for this machine at its running speed.",
         "- `waveform.json`: waveform features against normal, if a waveform was involved.",
         "",
         "This report is advisory. Confirm with an inspection before maintenance.",
@@ -107,10 +109,17 @@ class Reports:
         if "freqs" in evidence:
             rows = np.column_stack([evidence["freqs"], 10 * evidence["current"], 10 * evidence["normal"],
                                     10 * (evidence["current"] - evidence["normal"])])
-            np.savetxt(folder / "spectrum.csv", rows, delimiter=",", fmt="%.4f",
+            np.savetxt(folder / f"{evidence.get('name', 'spectrum')}.csv", rows, delimiter=",", fmt="%.4f",
                        header="frequency_hz,current_db,normal_db,change_db", comments="")
         if "waveform" in evidence:
             atomic_json(folder / "waveform.json", evidence["waveform"])
+        if evidence.get("frequencies"):
+            with open(folder / "fault_frequencies.csv", "w", encoding="utf-8", newline="") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["frequency_hz", "multiple_of_running_speed", "name", "used_to_detect"])
+                for row in evidence["frequencies"]:
+                    writer.writerow([row["hz"], "" if row["order"] is None else row["order"], row["name"],
+                                     row["used_for"]])
         self._index(finding, folder)
         return folder
 

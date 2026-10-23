@@ -65,6 +65,17 @@ class Knowledge:
         self.defaults = config.get("defaults", {})
         self.channels = config.get("channels", {})
 
+    def add_user_bearings(self, entries):
+        """Bearings added in the dashboard's AI page; they override a library entry of the same number."""
+        for entry in entries:
+            try:
+                orders = {k: float(entry[k]) for k in BEARING_KEYS}
+            except (KeyError, TypeError, ValueError):
+                continue
+            orders["designation"] = entry.get("designation", "")
+            for key in designation_keys(orders["designation"]):
+                self.bearings[key] = orders
+
     UI_KEYS = ("machine_type", "direction", "bearing", "line_frequency_hz", "gear_teeth", "blades", "iso_class")
 
     def machine(self, gid, ch, asset=None, ui=None):
@@ -285,11 +296,14 @@ def requirements_met(fault, view, info):
     return not types or info.get("machine_type") in types
 
 
-def diagnose(knowledge, view, info, min_score=0.6):
-    """Faults whose symptoms match the current change, best first."""
+def diagnose(knowledge, view, info, min_score=0.6, source="spectrum"):
+    """Faults whose symptoms match the current change, best first.
+
+    source picks the rules written for the normal spectrum or the envelope spectrum.
+    """
     matches = []
     for fault in knowledge.faults:
-        if not requirements_met(fault, view, info):
+        if fault.get("source", "spectrum") != source or not requirements_met(fault, view, info):
             continue
         total = score = 0.0
         texts, key_ok, changed = [], True, False
@@ -312,3 +326,42 @@ def diagnose(knowledge, view, info, min_score=0.6):
             matches.append({"id": fault["id"], "name": fault["name"], "confidence": round(score / total, 2),
                             "evidence": texts, "advice": fault.get("advice", "")})
     return sorted(matches, key=lambda m: -m["confidence"])
+
+
+TABLE = (
+    ("0.5x", "Half running speed", "Looseness, rub"),
+    ("1x", "Running speed", "Unbalance"),
+    ("2x", "2x running speed", "Misalignment, looseness"),
+    ("3x", "3x running speed", "Misalignment, looseness"),
+    ("2line", "2x mains frequency", "Motor electrical faults"),
+    ("ftf", "Cage (FTF)", "Bearing cage defect"),
+    ("bsf", "Ball spin (BSF)", "Rolling element defect"),
+    ("2bsf", "2x ball spin", "Rolling element defect"),
+    ("bpfo", "Outer race (BPFO)", "Outer race defect"),
+    ("2bpfo", "2x outer race", "Outer race defect"),
+    ("bpfi", "Inner race (BPFI)", "Inner race defect, with 1x sidebands"),
+    ("2bpfi", "2x inner race", "Inner race defect"),
+    ("bpf", "Blade/vane pass", "Impeller or fan problems"),
+    ("2bpf", "2x blade/vane pass", "Impeller or fan problems"),
+    ("gmf", "Gear mesh", "Gear wear or misalignment, with 1x sidebands"),
+    ("2gmf", "2x gear mesh", "Gear wear"),
+)
+
+
+class _Speed:
+    """The minimal view frequency() needs to turn an expression into Hz."""
+
+    def __init__(self, rpm):
+        self.rpm = rpm if rpm and rpm > 0 else None
+
+
+def frequency_table(info, rpm):
+    """Every fault frequency for one machine at its current speed, lowest first."""
+    speed = _Speed(rpm)
+    rows = []
+    for expression, name, used_for in TABLE:
+        hz = frequency(expression, speed, info)
+        if hz:
+            rows.append({"name": name, "hz": round(hz, 2), "order": round(hz / (rpm / 60), 3) if speed.rpm else None,
+                         "used_for": used_for})
+    return sorted(rows, key=lambda row: row["hz"])

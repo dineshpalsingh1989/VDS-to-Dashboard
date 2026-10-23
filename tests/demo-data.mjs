@@ -5,8 +5,8 @@ import { createHash } from 'node:crypto';
 const root=new URL('../',import.meta.url);
 const demo=JSON.parse(await readFile(new URL('demo/snapshots.json',root),'utf8'));
 
-test('all 15 application routes and the actual navigation are exported',()=>{
-  assert.equal(Object.keys(demo.pages).length,15);
+test('all 14 application routes and the actual navigation are exported',()=>{
+  assert.equal(Object.keys(demo.pages).length,14);
   for(const path of Object.keys(demo.pages)) assert(demo.shell.sidebar.includes(`href="${path}"`));
   assert(demo.shell.header.includes('VDS-to-Dashboard'));
   for(const text of ['CH1','CH2','CH3','CH4','RPM','Real-time Trends','Sensor type:','Sensitivity:']) assert(demo.pages['/'].html.includes(text));

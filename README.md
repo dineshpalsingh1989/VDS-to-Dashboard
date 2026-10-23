@@ -9,7 +9,7 @@
 
 Try the real application's layout in your browser with no installation or login.
 The demo uses the same dark header, full navigation menu, device accordion,
-four measurement cards, RPM card, and Plotly charts. Explore all 15 pages,
+four measurement cards, RPM card, and Plotly charts. Explore all 14 pages,
 toggle channel trends, open waveform/spectrum plots, change the diagnostic
 channel/order axis, and download sample history CSV. Data is a captured synthetic
 example, not live measurements. Configuration and service controls are disabled.
@@ -237,7 +237,9 @@ intend to remove its persisted data.
 ## Cytron IRIV Edge AI
 
 The [iriv-edge](iriv-edge/README.md) folder installs the dashboard on a Cytron IRIV
-Edge AI (Raspberry Pi CM5) and adds a self-learning AI advisor. It learns each
+Edge AI (Raspberry Pi CM5) and adds a self-learning AI advisor. The AI is only available
+on IRIV Edge AI installs; other installs show no AI page. Try it on any computer with
+`python iriv-edge/demo/run_demo.py`. It learns each
 channel's normal spectrum, waveform and readings, then reports changes and matches
 them to a fault symptom library with bearing defect frequencies. Its findings appear
 in the health panel and never drive outputs.
@@ -336,6 +338,7 @@ be re-entered in Alarm management with verified measurement settings.
 | VDS_TREND_RETENTION_DAYS | 0 | Scalar history retention |
 | VDS_RAW_RETENTION_DAYS | 0 | Waveform/spectrum retention |
 | VDS_ALARM_RETENTION_DAYS | 0 | Acknowledged alarm retention |
+| VDS_EDGE_AI | 0 | 1 on IRIV Edge AI installs: AI analysis page and learning samples |
 | VDS_LEARNING_INTERVAL_S | 600 | Seconds between AI learning samples per channel of AI-enabled VDS units; 0 is off |
 | VDS_LEARNING_RETENTION_HOURS | 6 | Hours each channel keeps learning samples |
 | VDS_BIND_ADDRESS | 127.0.0.1 | Compose host publication address |

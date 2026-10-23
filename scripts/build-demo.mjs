@@ -28,8 +28,8 @@ try {
     });
   }
   const bank=await (await fetch(source+'/__demo__/bank')).json();
-  const exported={bank,pages:{},shell:{},source:'Rendered app.py, vds_dashboard/workspace_views.py and vds_dashboard/ai_views.py with synthetic data only',layoutSources:{}};
-  for(const path of ['app.py','vds_dashboard/workspace_views.py','vds_dashboard/ai_views.py','assets/dashboard.css']) {
+  const exported={bank,pages:{},shell:{},source:'Rendered app.py and vds_dashboard/workspace_views.py with synthetic data only',layoutSources:{}};
+  for(const path of ['app.py','vds_dashboard/workspace_views.py','assets/dashboard.css']) {
     const content=(await readFile(new URL('../'+path,import.meta.url),'utf8')).replaceAll('\r\n','\n');
     exported.layoutSources[path]=createHash('sha256').update(content).digest('hex');
   }
@@ -54,7 +54,7 @@ try {
     ['/alarms','#rule-channel'],['/diagnostics','#diag-channel'],['/reports','#report-preview'],
     ['/device','#device-info-list'],['/data-storage','#data-storage-controls-container'],['/history','#history-channel-select'],
     ['/debug','#debug-log-output'],['/mqtt','#mqtt-host-input'],['/ethernet','#ethernet-settings-card-body'],
-    ['/modbus','#modbus-table-container'],['/opcua','#opc-live-tree-container'],['/ai','#ai-progress']];
+    ['/modbus','#modbus-table-container'],['/opcua','#opc-live-tree-container']];
   for(const [path,ready] of routes) {
     await navigate(path,ready);
     if(path==='/') {
@@ -64,10 +64,6 @@ try {
     }
     if(path==='/assets') await choose('asset-channel');
     if(path==='/alarms') await choose('rule-channel');
-    if(path==='/ai') {
-      await until('document.querySelector("#ai-progress table") !== null');
-      await choose('ai-channel');
-    }
     if(path==='/diagnostics') {
       await choose('diag-channel');
       await until('document.querySelector("#diag-spectrum .js-plotly-plot")?._fullData?.[0]?.x?.length > 0');

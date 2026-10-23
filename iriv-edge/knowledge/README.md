@@ -5,7 +5,7 @@ The AI advisor reads these files every time it starts. Edit them, then run
 
 | File | What it holds |
 |---|---|
-| `faults.json` | Fault symptom library: unbalance, misalignment, looseness, bearing defects, gear, blade pass, electrical, cavitation and impacting |
+| `faults.json` | Fault symptom library: unbalance, misalignment, looseness, bearing defects (normal and envelope spectrum), gear, blade pass, electrical, cavitation and impacting |
 | `bearings.csv` | Bearing defect frequencies (BPFO, BPFI, BSF, FTF) as multiples of shaft speed |
 | `severity.json` | ISO 20816-3 velocity zones A–D |
 | `machines.example.json` | Template describing each VDS channel; copy it to `machines.json` |
@@ -28,6 +28,9 @@ asset registry instead, for example "DE bearing 6205-2RS" in the location field.
 The advisor finds it there too.
 
 ## Add bearings
+
+The easiest way is the **Add a bearing** form on the dashboard's AI analysis page. It
+stores the bearing in the dashboard database, and it overrides a library entry with the same number.
 
 Only bearings with published geometry are included, so every frequency here can
 be traced to a source. Add your own bearings from the manufacturer's catalogue
@@ -70,6 +73,7 @@ Frequencies are written as `1x`, `2x`, `0.5x`, `line`, `2line`, `bpfo`,
 | `waveform_rise` | Waveform feature increased by `min_change` from normal |
 | `direction` | Sensor direction contains one of the words in `any` |
 
-Add `"negate": true` to require that evidence is absent. Use `requires`,
+Add `"source": "envelope"` to a fault to check it against the envelope spectrum, which shows bearing
+impacts early; faults without it use the normal spectrum. Add `"negate": true` to require that evidence is absent. Use `requires`,
 `unless` and `machine_types` to limit where a fault applies. The test suite
 checks that every rule uses known evidence types.

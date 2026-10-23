@@ -130,7 +130,8 @@ class DashboardTests(unittest.TestCase):
                 "gear_teeth": None, "blades": None, "iso_class": "group2_rigid"}
         state = [channel] + [{"id": "ai-" + k, "property": "value", "value": form[k]} for k in ai_views.FORM_KEYS]
         switch = {"id": {"type": "ai-gw-switch", "gid": "g"}, "property": "value", "value": True}
-        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test"}):
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test",
+                                     "VDS_EDGE_AI": "1"}):
             response = self.callback_request("ai_load_channel", [channel], headers=viewer)
             self.assertEqual(response.status_code, 200)
             self.assertIn("reports 1480 RPM", response.get_data(as_text=True))
@@ -149,6 +150,17 @@ class DashboardTests(unittest.TestCase):
         with closing(app.get_db_connection()) as conn:
             self.assertTrue(historian.ai_enabled(conn, "g"))
             self.assertEqual(historian.ai_channel_settings(conn, "g", "1")["bearing"], "6205-2RS")
+
+    def test_ai_page_exists_only_on_iriv_edge_installs(self):
+        route = [{"id": "url", "property": "pathname", "value": "/ai"}]
+        switch = [[{"id": {"type": "ai-gw-switch", "gid": "g"}, "property": "value", "value": True}]]
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "0"}):
+            self.assertNotIn("ai-gateways", self.callback_request("display_page", route).get_data(as_text=True))
+            refused = self.callback_request("ai_toggle_gateway", switch,
+                                            changed=['{"gid":"g","type":"ai-gw-switch"}.value'])
+            self.assertIn("only available on IRIV Edge AI", refused.get_data(as_text=True))
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "1"}):
+            self.assertIn("ai-gateways", self.callback_request("display_page", route).get_data(as_text=True))
 
     def test_cross_origin_action_rejected(self):
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-secret"}):

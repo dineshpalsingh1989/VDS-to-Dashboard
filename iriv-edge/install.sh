@@ -39,6 +39,12 @@ if [[ -z "$data_dir" ]]; then
   # Turn on learning samples (one spectrum and waveform per channel every 10 minutes)
   # unless .env already chooses an interval.
   ( umask 077; [[ -e .env ]] || cp .env.example .env )
+  # This is an IRIV Edge AI: turn on the dashboard's AI features.
+  if ! grep -Eq '^VDS_EDGE_AI=1$' .env; then
+    sed -i '/^VDS_EDGE_AI=/d' .env
+    printf '\nVDS_EDGE_AI=1\n' >> .env
+    printf '%s\n' 'Enabled the AI analysis page in .env (VDS_EDGE_AI=1).'
+  fi
   if ! grep -Eq '^VDS_LEARNING_INTERVAL_S=[1-9]' .env; then
     sed -i '/^VDS_LEARNING_INTERVAL_S=/d' .env
     printf '\nVDS_LEARNING_INTERVAL_S=600\n' >> .env
