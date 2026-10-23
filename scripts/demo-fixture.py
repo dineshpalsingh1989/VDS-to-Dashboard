@@ -29,10 +29,10 @@ os.environ.update(
 Path(os.environ["VDS_CONFIG_DIR"]).mkdir(parents=True)
 
 import app  # noqa: E402
-import historian  # noqa: E402
+from vds_dashboard import historian  # noqa: E402
 import numpy as np  # noqa: E402
 import plotly.graph_objects as go  # noqa: E402
-from diagnostics import spectrum_figure, waterfall_figure  # noqa: E402
+from vds_dashboard.diagnostics import spectrum_figure, waterfall_figure  # noqa: E402
 from plotly.utils import PlotlyJSONEncoder  # noqa: E402
 from waitress import create_server  # noqa: E402
 

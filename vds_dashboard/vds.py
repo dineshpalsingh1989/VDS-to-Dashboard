@@ -11,7 +11,7 @@ from datetime import datetime
 
 import numpy as np
 
-from runtime import validate_payload
+from .runtime import validate_payload
 
 METRIC_KEYS = {
     "Acceleration": "Acceleration",

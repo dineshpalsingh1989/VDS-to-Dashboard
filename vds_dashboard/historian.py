@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from vds import advance_alarm, freshness, signature, validate_alarm
+from .vds import advance_alarm, freshness, signature, validate_alarm
 
 
 def setup_schema(conn):

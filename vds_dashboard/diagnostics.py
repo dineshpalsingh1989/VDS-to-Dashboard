@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from plotly.subplots import make_subplots
 
-from vds import spectrum_signature, spectrum_xy
+from .vds import spectrum_signature, spectrum_xy
 
 
 def export_frame(frame):

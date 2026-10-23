@@ -1,6 +1,6 @@
 import unittest
 
-from diagnostics import waveform_figure, spectrum_with_rpm
+from vds_dashboard.diagnostics import waveform_figure, spectrum_with_rpm
 
 
 class DiagnosticDisplayTests(unittest.TestCase):
@@ -30,7 +30,7 @@ class DiagnosticDisplayTests(unittest.TestCase):
 
 class AcquisitionTests(unittest.TestCase):
     def test_peak_ranking_dc_exclusion_and_orders(self):
-        from diagnostics import spectrum_peaks
+        from vds_dashboard.diagnostics import spectrum_peaks
         capture = dict(spectrum_data=[99, 1, 5, 1, 9, 0, 99], bandwidth=60, lines=6)
         peaks = spectrum_peaks(capture, 1200)
         self.assertEqual([p["frequency"] for p in peaks], [40, 20])
@@ -38,7 +38,7 @@ class AcquisitionTests(unittest.TestCase):
         self.assertIsNone(spectrum_peaks(capture)[0]["order"])
 
     def test_metadata_keeps_unknown_settings_and_marks_override(self):
-        from diagnostics import capture_details
+        from vds_dashboard.diagnostics import capture_details
         capture = dict(timestamp_ms=1000, bandwidth=500, lines=100, rpm=1440)
         details = capture_details(capture, "Spectrum", 1200)
         self.assertEqual(details["Frequency resolution"], "5 Hz")
@@ -57,7 +57,7 @@ class AcquisitionTests(unittest.TestCase):
         from contextlib import closing
         import tempfile
         import numpy as np
-        from diagnostics import recorded_capture
+        from vds_dashboard.diagnostics import recorded_capture
         with tempfile.TemporaryDirectory() as folder:
             with closing(sqlite3.connect(folder + "/capture.db")) as conn:
                 conn.execute("CREATE TABLE raw_waveforms (gateway_id,channel,timestamp,waveform_data,sampling_freq,context)")
@@ -76,7 +76,7 @@ class AcquisitionTests(unittest.TestCase):
 
 class RpmSourceTests(unittest.TestCase):
     def test_live_speed_follows_dashboard_without_changing_capture(self):
-        from diagnostics import display_rpm, capture_details
+        from vds_dashboard.diagnostics import display_rpm, capture_details
         capture = dict(rpm=600)
         displayed = display_rpm(capture, 1440, live=True)
         self.assertEqual(displayed["rpm"], 1440)
@@ -84,7 +84,7 @@ class RpmSourceTests(unittest.TestCase):
         self.assertEqual(capture["rpm"], 600)
 
     def test_invalid_dashboard_requires_manual_and_history_stays_independent(self):
-        from diagnostics import display_rpm
+        from vds_dashboard.diagnostics import display_rpm
         capture = dict(rpm=600, spectrum_data=[0, 1], bandwidth=20, lines=1)
         for speed in (None, 0, -1, float("nan"), float("inf"), "bad"):
             displayed = display_rpm(capture, speed, live=True)

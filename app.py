@@ -32,13 +32,13 @@ import tempfile
 import hmac
 from urllib.parse import urlsplit
 from flask import request, Response
-from runtime import atomic_json_write, normalize_event, validate_payload, decode_config, load_json_config
-from monitoring import assess_health
-from vds import normalize_packet, freshness, protocol_value
-from vds import signature, spectrum_xy
-from diagnostics import export_frame, history_figure
-import historian
-import workspace_views
+from vds_dashboard.runtime import atomic_json_write, normalize_event, validate_payload, decode_config, load_json_config
+from vds_dashboard.monitoring import assess_health
+from vds_dashboard.vds import normalize_packet, freshness, protocol_value
+from vds_dashboard.vds import signature, spectrum_xy
+from vds_dashboard.diagnostics import export_frame, history_figure
+from vds_dashboard import historian
+from vds_dashboard import workspace_views
 from contextlib import closing
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')

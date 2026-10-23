@@ -11,9 +11,9 @@ from dash import Input, Output, State, dcc, html, dash_table, no_update
 from flask import request
 import dash_bootstrap_components as dbc
 
-import historian
-from diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture, display_rpm
-from vds import spectrum_xy
+from . import historian
+from .diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture, display_rpm
+from .vds import spectrum_xy
 
 READ_CALLBACKS = {
     "channel_options",

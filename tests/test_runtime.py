@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from runtime import atomic_json_write, normalize_event, validate_payload
+from vds_dashboard.runtime import atomic_json_write, normalize_event, validate_payload
 
 
 class RuntimeTests(unittest.TestCase):

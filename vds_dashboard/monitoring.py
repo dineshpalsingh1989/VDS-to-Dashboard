@@ -3,7 +3,7 @@
 import time
 from datetime import datetime
 
-from vds import freshness, signature
+from .vds import freshness, signature
 
 
 def assess_health(devices, mqtt_status, disk_free_percent, now=None, baselines=None):

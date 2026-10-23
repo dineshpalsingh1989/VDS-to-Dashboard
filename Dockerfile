@@ -10,7 +10,8 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --uid 10001 --create-home vds \
     && mkdir -p /data/config && chown -R vds:vds /data
-COPY --chown=vds:vds app.py runtime.py monitoring.py vds.py historian.py diagnostics.py workspace_views.py ./
+COPY --chown=vds:vds app.py ./
+COPY --chown=vds:vds vds_dashboard ./vds_dashboard
 COPY --chown=vds:vds assets ./assets
 USER vds
 EXPOSE 8050

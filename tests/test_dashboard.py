@@ -11,8 +11,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import app
-from runtime import decode_config
-from monitoring import assess_health
+from vds_dashboard.runtime import decode_config
+from vds_dashboard.monitoring import assess_health
 
 
 class DashboardTests(unittest.TestCase):

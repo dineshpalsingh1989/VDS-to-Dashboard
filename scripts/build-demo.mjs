@@ -28,8 +28,8 @@ try {
     });
   }
   const bank=await (await fetch(source+'/__demo__/bank')).json();
-  const exported={bank,pages:{},shell:{},source:'Rendered app.py and workspace_views.py with synthetic data only',layoutSources:{}};
-  for(const path of ['app.py','workspace_views.py','assets/dashboard.css']) {
+  const exported={bank,pages:{},shell:{},source:'Rendered app.py and vds_dashboard/workspace_views.py with synthetic data only',layoutSources:{}};
+  for(const path of ['app.py','vds_dashboard/workspace_views.py','assets/dashboard.css']) {
     const content=(await readFile(new URL('../'+path,import.meta.url),'utf8')).replaceAll('\r\n','\n');
     exported.layoutSources[path]=createHash('sha256').update(content).digest('hex');
   }

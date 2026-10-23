@@ -35,7 +35,7 @@ def main():
         messages = [messages]
     if not isinstance(messages, list) or not messages:
         parser.error("Input must contain one or more messages")
-    from vds import normalize_packet
+    from vds_dashboard.vds import normalize_packet
 
     for message in messages:
         normalize_packet(message)

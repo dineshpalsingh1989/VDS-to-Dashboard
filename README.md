@@ -347,7 +347,7 @@ namespace. These gateways remain monitoring interfaces, not machinery protection
 
 ```powershell
 .venv\Scripts\python -m unittest discover -s tests -v
-.venv\Scripts\python -m compileall -q app.py runtime.py vds.py historian.py diagnostics.py workspace_views.py monitoring.py replay.py
+.venv\Scripts\python -m compileall -q app.py replay.py vds_dashboard
 .venv\Scripts\python replay.py tests/fixtures/vds130_messages.json --data-dir .review/replay --rebase-time --record-raw
 ```
 
@@ -374,7 +374,7 @@ Maintainers publishing a fork should check its package visibility separately;
 GitHub can create new packages as private. Checks exercise software behavior;
 commissioning against real VDS hardware is still required for a new installation.
 
-Modules: vds.py normalizes measurements; historian.py persists context, rules,
+Modules live in `vds_dashboard/`: vds.py normalizes measurements; historian.py persists context, rules,
 backups and retention; diagnostics.py builds plots/exports; workspace_views.py
 contains the new pages; monitoring.py provides advisory agents; app.py integrates
 hardware services and the original dashboard.

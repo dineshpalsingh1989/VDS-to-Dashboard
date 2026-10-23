@@ -10,10 +10,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app
-import historian
-from diagnostics import history_figure, spectrum_figure, waterfall_figure
-from monitoring import assess_health
-from vds import advance_alarm, freshness, normalize_packet, protocol_value, spectrum_xy
+from vds_dashboard import historian
+from vds_dashboard.diagnostics import history_figure, spectrum_figure, waterfall_figure
+from vds_dashboard.monitoring import assess_health
+from vds_dashboard.vds import advance_alarm, freshness, normalize_packet, protocol_value, spectrum_xy
 
 MESSAGES = json.loads(
     (Path(__file__).parent / "fixtures" / "vds130_messages.json").read_text(

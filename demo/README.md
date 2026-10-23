@@ -1,7 +1,7 @@
 # Public viewer demo
 
 The public preview is exported from the **actual rendered Dash application**, using
-`app.py`, `workspace_views.py`, and `assets/dashboard.css`. Its 14 pages retain
+`app.py`, `vds_dashboard/workspace_views.py`, and `assets/dashboard.css`. Its 14 pages retain
 the real header, menu, device accordion, measurement/RPM cards, forms, and charts.
 Only the synthetic-data notice and offline exploration behavior are demo-specific.
 Dropdowns use native HTML selects in place of Dash's server-driven dropdowns.

@@ -2,9 +2,9 @@ name: Public dashboard demo
 on:
   push:
     branches: [main]
-    paths: ['demo/**', '*.py', 'assets/**', 'requirements.txt', 'tests/demo-*.mjs', 'scripts/demo-*', 'scripts/build-demo.mjs', '.github/workflows/demo.yml']
+    paths: ['demo/**', '*.py', 'vds_dashboard/**', 'assets/**', 'requirements.txt', 'tests/demo-*.mjs', 'scripts/demo-*', 'scripts/build-demo.mjs', '.github/workflows/demo.yml']
   pull_request:
-    paths: ['demo/**', '*.py', 'assets/**', 'requirements.txt', 'tests/demo-*.mjs', 'scripts/demo-*', 'scripts/build-demo.mjs', '.github/workflows/demo.yml']
+    paths: ['demo/**', '*.py', 'vds_dashboard/**', 'assets/**', 'requirements.txt', 'tests/demo-*.mjs', 'scripts/demo-*', 'scripts/build-demo.mjs', '.github/workflows/demo.yml']
   workflow_dispatch:
 
 permissions:
