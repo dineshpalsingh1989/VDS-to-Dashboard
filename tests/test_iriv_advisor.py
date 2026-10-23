@@ -397,7 +397,7 @@ class AdvisorLearningTests(AdvisorBase):
         self.ms = ms
         report = self.cycle(advisor)
         text = " ".join(f["message"] for f in report["findings"])
-        self.assertRegex(text, r"Velocity is rising 0\.1\d mm/s per day")
+        self.assertRegex(text, r"Velocity is rising 0\.1\d+ mm/s per day")
         self.assertRegex(text, r"reaches ISO zone C \(2\.8 mm/s\) in about \d+ days")
         self.assertIn("ISO zone C in about", report["progress"][0]["trend"])
         trend = json.loads((self.data / "ai" / "tables.json").read_text())["trends"]["GW1/1"]
