@@ -12,7 +12,7 @@ python iriv-edge/demo/run_demo.py         # about 1-2 minutes to simulate 4 days
 On Windows you can instead double-click `iriv-edge\demo\run_demo.cmd`. It uses
 [uv](https://docs.astral.sh/uv/) when installed, so Python itself is not needed.
 
-Wait until the window says **Open http://127.0.0.1:8060/ai**, then open that address.
+Wait until the window says **Open http://127.0.0.1:8060**, then open that address.
 The page only works while that window stays open. Press Ctrl+C to stop.
 
 | Option | Meaning |
@@ -32,14 +32,18 @@ The page only works while that window stays open. Press Ctrl+C to stop.
 | PUMP-STATION-1 CH4 | Cooling tower fan F-201, motor drive end | Healthy |
 | CONVEYOR-2 CH1 | Conveyor gearbox G-301, 23 teeth | Mechanical looseness. This VDS has no speed sensor, so a fixed 1460 RPM is entered |
 
-## Things to try in the AI page
+## Things to try
 
-- Read the **active findings**, then press **Confirmed**, **Wrong** or **Repaired**.
-  The AI scans every 20 seconds in the demo, so the effect shows quickly.
-- Choose a sensor to see its **fault frequency table** and its **trend** with the
-  projection to ISO zone C.
-- **Add a bearing**, then enter it as a sensor's bearing number.
-- Open a report under **AI reports**, or open the folders themselves in
+- On the dashboard, open **PUMP-STATION-1**, then **CH1 → Spectrum**. You see the
+  bearing lines (BPFO, BPFI, BSF, FTF), the peaks matched to them, and the AI's
+  finding. Press **Confirmed**, **Wrong** or **Repaired**; the AI scans every
+  20 seconds in the demo, so the effect shows quickly.
+- In the spectrum, type another bearing number (for example 6308) to see where its
+  lines fall, switch harmonics, or use the log scale.
+- Open **Asset registry**, choose a sensor and look at the **AI analysis** section.
+  Typing a bearing number shows its frequencies in Hz.
+- **Health Agents** shows every sensor's AI status and trend. **Reports and backups**
+  lists the AI reports; the folders themselves are in
   `iriv-edge/demo/output/data/ai/reports/`.
 
 Everything is synthetic. Nothing connects to a broker, PLC or real sensor, and the

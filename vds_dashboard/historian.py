@@ -1,7 +1,6 @@
 """Durable VDS context, asset configuration, alarms, and maintenance."""
 
 import json
-import math
 import os
 import re
 import sqlite3
@@ -10,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
+from .fault_frequencies import bearing_orders
 from .vds import advance_alarm, freshness, signature, validate_alarm
 
 
@@ -122,7 +122,7 @@ def edge_ai_enabled():
 
 
 def ai_enabled(conn, gid):
-    """The per-VDS AI switch. Off until a user turns it on in the AI page."""
+    """The per-VDS AI switch. Off until a user turns it on in the asset registry."""
     return bool(get_json(conn, "ai_settings", "settings", gid, "", {}).get("enabled"))
 
 
@@ -192,17 +192,6 @@ def request_ai_relearn(conn, gid, channel, now=None):
 
 
 AI_VERDICTS = ("confirmed", "wrong", "repaired")
-
-
-def bearing_orders(balls, ball_diameter, pitch_diameter, contact_angle_deg=0.0):
-    """Bearing defect frequencies as multiples of shaft speed (stationary outer ring)."""
-    r = ball_diameter / pitch_diameter * math.cos(math.radians(contact_angle_deg))
-    return {
-        "bpfo": balls / 2 * (1 - r),
-        "bpfi": balls / 2 * (1 + r),
-        "bsf": pitch_diameter / (2 * ball_diameter) * (1 - r * r),
-        "ftf": 0.5 * (1 - r),
-    }
 
 
 def _number(form, key, low, high, label):

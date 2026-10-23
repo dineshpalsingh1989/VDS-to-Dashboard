@@ -8,7 +8,7 @@ readings for changes, and matches each change against a library of machine fault
 symptoms.
 
 **The AI is an IRIV Edge AI feature only.** Other installs of the dashboard show no
-AI page and keep no learning samples. `install.sh` turns the AI on by setting
+AI controls and keep no learning samples. `install.sh` turns the AI on by setting
 `VDS_EDGE_AI=1`.
 
 | Device feature | Use in this project |
@@ -26,8 +26,8 @@ python iriv-edge/demo/run_demo.py
 ```
 
 This simulates four days of a small plant through the real dashboard and the real
-AI, then opens the dashboard at http://127.0.0.1:8060/ai. See
-[demo/README.md](demo/README.md).
+AI, then serves the dashboard at http://127.0.0.1:8060. Press a sensor's
+**Spectrum** button. See [demo/README.md](demo/README.md).
 
 ## What is in this folder
 
@@ -36,12 +36,12 @@ AI, then opens the dashboard at http://127.0.0.1:8060/ai. See
 | `install.sh` | One-command setup: dashboard container, AI features on, advisor service |
 | `ai_advisor.py` | The advisor: learns, detects changes, writes findings for the dashboard |
 | `learning.py` | Self-learning profiles, envelope analysis, hourly trends |
-| `symptoms.py` | Matches changes against the fault library; fault frequency tables |
+| `symptoms.py` | Matches changes against the fault library |
 | `storage.py` | Detects the NVMe SSD and keeps AI data there when mounted |
 | `reports.py` | Writes the daily report folders |
 | `setup-ssd.sh` | Prepares and mounts a blank NVMe SSD (asks before erasing) |
 | `bearing_tool.py` | Adds bearings from the command line |
-| `knowledge/` | Fault symptoms, bearings, ISO severity zones. See [knowledge/README.md](knowledge/README.md) |
+| `knowledge/` | Fault symptoms, bearing library (69 bearings), ISO severity zones. See [knowledge/README.md](knowledge/README.md) |
 | `demo/` | Simulated plant to see the AI working, without hardware |
 | `vds-ai-advisor.service` | Hardened systemd unit |
 
@@ -54,21 +54,24 @@ bash iriv-edge/install.sh            # build the dashboard on the device
 bash iriv-edge/install.sh --image    # or pull the published container
 ```
 
-Then open **AI analysis** in the dashboard sidebar:
+Then, in the dashboard:
 
-1. **Switch the AI on per VDS.** Only switched-on units are analysed, and only
-   they keep learning samples (one spectrum and waveform per channel every
-   10 minutes, set by `VDS_LEARNING_INTERVAL_S`).
-2. **Describe each sensor.** Enter the machine name, sensor location, machine type,
-   direction, bearing number, gear teeth or blades, mains frequency and ISO class.
-   The page shows whether the VDS reports a speed. If it has no speed sensor,
-   choose **Fixed speed** and type the RPM.
-3. **Check the fault frequency table** under the form. It lists where every fault
-   of that machine shows at its current speed.
-4. **Add missing bearings** with the form on the same page, from the
-   manufacturer's defect frequencies or the ball count and sizes.
-5. **Watch learning progress, trends, findings and reports.** Viewers can read
-   everything, but only an administrator can change it or give feedback.
+1. **Asset registry: set up each sensor.** Below the usual machine and location
+   fields is an **AI analysis** section. Switch the AI on for the VDS, then enter
+   the machine type, **bearing number**, gear teeth or blades, mains frequency and
+   ISO class. Typing a bearing number shows its defect frequencies in Hz straight
+   away. If the VDS has no speed sensor, choose **Fixed speed** and type the RPM.
+   A bearing that is not in the library can be added there too.
+2. **Dashboard: open a sensor's Spectrum.** The spectrum shows the fault frequency
+   lines (running speed, bearing, gear or blade pass, mains), the strongest peaks
+   with what each one matches, and the AI's finding for that sensor with the
+   Confirmed, Wrong and Repaired buttons. Change the bearing, harmonics or log scale
+   right there; "Save this bearing for the sensor" keeps it.
+3. **Health Agents** shows AI findings and learning progress for every sensor.
+   **Reports and backups** lists the AI's report folders.
+
+Viewers can read everything, but only an administrator can change settings or
+give feedback.
 
 For a native install without Docker, set `VDS_EDGE_AI=1` in the dashboard's
 environment and run `install.sh --data-dir <dashboard data folder>`.
@@ -91,7 +94,7 @@ journalctl -u vds-ai-advisor -f                                    # advisor log
 3. **Envelope analysis for early bearing damage.** From each raw waveform it
    computes an envelope (demodulated) spectrum. Bearing defects make small impacts
    that show there first, often weeks before the normal spectrum. This needs the
-   waveform sampled at 2 kHz or more; the AI page says so when it is not.
+   waveform sampled at 2 kHz or more; Health Agents says so when it is not.
 4. **Names the likely fault.** Each change is matched against `knowledge/faults.json`
    using running speed, bearing frequencies, gear teeth, blades, mains frequency
    and sensor direction, and against faults people confirmed before.
@@ -100,7 +103,7 @@ journalctl -u vds-ai-advisor -f                                    # advisor log
    rise gets an estimate such as "reaches ISO zone C (2.8 mm/s) in about 9 days",
    or "twice its learned normal" when no ISO class is set. This also catches slow
    wear that never looks like a sudden change.
-6. **Learns from people.** Each finding in the AI page has three buttons:
+6. **Learns from people.** Each finding in the spectrum view has three buttons:
    - **Confirmed** keeps the fault's change pattern. If the same pattern appears
      again, on this or any sensor, the finding says "seen before" and names it.
    - **Wrong (normal operation)** closes the finding and quickly learns the pattern
@@ -136,7 +139,7 @@ Each day the AI works it writes a folder you can open if anything looks wrong:
         waveform.json                    waveform features against normal (waveform findings)
 ```
 
-The 50 latest reports can also be read in the AI page. Folders older than 180 days
+The 50 latest reports can also be read on the dashboard's Reports and backups page. Folders older than 180 days
 are removed (`--report-days`).
 
 ## NVMe SSD
@@ -196,6 +199,9 @@ waveforms at the defaults, that is about 2.9 GB. The learned profiles take about
   confirmation, phase readings or an inspection.
 - Bearing faults are only named when the bearing is known. Without it, a new
   non-synchronous peak is still reported as a possible bearing defect.
+- The bearing library covers the common deep groove series 60xx, 62xx and 63xx.
+  Other makers' versions of the same number can differ slightly in ball count;
+  add the exact bearing when you know it.
 - Machines that run at many speeds take longer to learn, because each speed band
   learns separately. Trends mix all speeds.
 - Envelope analysis needs waveforms sampled at 2 kHz or more.

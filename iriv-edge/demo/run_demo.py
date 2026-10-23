@@ -3,8 +3,8 @@
 
 Simulates several days of VDS data for five sensors on three machines, feeds it
 through the dashboard's own MQTT message handler, runs the AI advisor over it
-hour by hour, and then serves the dashboard at http://127.0.0.1:8060 so you can
-open the AI analysis page. Nothing connects to a broker, PLC or real sensor.
+hour by hour, and then serves the dashboard at http://127.0.0.1:8060. Open a sensor's
+spectrum to see fault lines and the AI finding. Nothing connects to a broker, PLC or sensor.
 
 What develops during the simulated days:
   * Cooling pump P-101 motor: an outer race defect on its 6205-2RS bearing.
@@ -12,7 +12,7 @@ What develops during the simulated days:
   * Cooling tower fan F-201: growing unbalance. Velocity rises steadily, so the
     AI estimates how many days until ISO zone C.
   * Conveyor gearbox G-301: mechanical looseness. Its VDS has no speed sensor,
-    so the demo enters a fixed speed, as a user would in the AI page.
+    so the demo enters a fixed speed, as a user would in the asset registry.
   * Two healthy sensors that should stay quiet.
 
     python iriv-edge/demo/run_demo.py              # simulate 4 days, then open the dashboard
@@ -182,7 +182,7 @@ def main(argv=None):
         advisor.close()
         return report
 
-    def keep_scanning():  # so Confirmed / Wrong / Repaired in the AI page take effect
+    def keep_scanning():  # so Confirmed / Wrong / Repaired in the spectrum view take effect
         while True:
             time.sleep(20)
             try:
@@ -192,7 +192,7 @@ def main(argv=None):
 
     threading.Thread(target=keep_scanning, daemon=True).start()
     from waitress import serve  # noqa: E402
-    print(f"\nOpen http://127.0.0.1:{args.port}/ai  (Ctrl+C to stop)")
+    print(f"\nOpen http://127.0.0.1:{args.port} and press a sensor's Spectrum button (Ctrl+C to stop)")
     serve(app.app.server, host="127.0.0.1", port=args.port, threads=4)
 
 

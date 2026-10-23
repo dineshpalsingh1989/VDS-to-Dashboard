@@ -37,6 +37,7 @@ from vds_dashboard.monitoring import assess_health, load_ai_findings
 from vds_dashboard.vds import normalize_packet, freshness, protocol_value
 from vds_dashboard.vds import signature, spectrum_xy
 from vds_dashboard.diagnostics import export_frame, history_figure
+from vds_dashboard.spectrum_view import spectrum_figure
 from vds_dashboard import historian
 from vds_dashboard import workspace_views
 from vds_dashboard import ai_views
@@ -1021,7 +1022,7 @@ def protect_dashboard():
                     'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
                     'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
                     'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
-                    'disable_ch', 'toggle_time_inputs'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS
+                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS
         status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
         if viewer and not admin and name not in readonly and not status_poll:
             return Response('Administrator access required for this action', 403)
@@ -1188,8 +1189,6 @@ sidebar = html.Div([
         dbc.NavLink('Alarm management', href='/alarms', active='exact', className='text-white'),
         dbc.NavLink('Vibration diagnostics', href='/diagnostics', active='exact', className='text-white'),
         dbc.NavLink('Reports and backups', href='/reports', active='exact', className='text-white'),
-        *([dbc.NavLink([html.I(className="fas fa-brain me-2"), "AI analysis"], href="/ai", active="exact", className="text-white")]
-          if historian.edge_ai_enabled() else []),  # IRIV Edge AI installs only
         dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"), 
@@ -1464,7 +1463,12 @@ device_info_layout = html.Div([
 ])
 
 content = html.Div(id="page-content", style={"marginLeft": "18rem", "padding": "2rem 1rem", "paddingTop": "5rem", "transition": "all 0.3s"})
-graph_modal = dbc.Modal([dbc.ModalHeader(id="modal-header"),dbc.ModalBody([dcc.Graph(id="modal-graph", style={"height": "450px"}),html.Div(id="modal-peak-table-container", className="mt-3")]),dbc.ModalFooter(html.Button("Close", id="modal-close-btn", className="btn btn-primary ms-auto"))], id="graph-modal", is_open=False, size="xl")
+graph_modal = dbc.Modal([dbc.ModalHeader(id="modal-header"), dbc.ModalBody([
+    dcc.Store(id="modal-target"), html.Div(id="modal-ai"), html.Div(id="modal-feedback-result"),
+    dcc.Graph(id="modal-graph", style={"height": "470px"}, config={"displaylogo": False}),
+    ai_views.spectrum_controls(),  # IRIV Edge AI only; hidden elsewhere
+    html.Div(id="modal-peak-table-container", className="mt-3")]),
+    dbc.ModalFooter(html.Button("Close", id="modal-close-btn", className="btn btn-primary ms-auto"))], id="graph-modal", is_open=False, size="xl")
 alarm_modal = dbc.Modal([dbc.ModalHeader(id="alarm-modal-header"),dbc.ModalBody(id="alarm-modal-body"),dbc.ModalFooter([dbc.Button("Cancel", id="alarm-modal-close-btn", color="secondary")])], id="alarm-modal", is_open=False)
 initial_device_config = load_data_from_db_on_startup()
 
@@ -1499,12 +1503,11 @@ def refresh_live_data(message):
 def display_page(pathname):
     pages = {'/assets': workspace_views.assets_page, '/alarms': workspace_views.alarms_page,
              '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page}
-    if pathname == '/ai' and historian.edge_ai_enabled():
-        return ai_views.ai_page()
     if pathname in pages:
         return pages[pathname]()
     if pathname == '/health':
-        return html.Div([html.H3('Health Agents'), html.P('Live advisory checks for sensor freshness, connectivity, and storage.', className='text-muted'), html.Div(id='health-findings')])
+        return html.Div([html.H3('Health Agents'), html.P('Live advisory checks for sensor freshness, connectivity, and storage.', className='text-muted'), html.Div(id='health-findings'),
+                         *([ai_views.health_section()] if historian.edge_ai_enabled() else [])])
     if pathname == "/device": return device_info_layout
     elif pathname == "/data-storage": return data_storage_layout
     elif pathname == "/history": return history_layout
@@ -1795,45 +1798,66 @@ def update_device_info(trigger_data):
         items.append(dbc.ListGroupItem([dbc.Badge("Offline" if is_stale else "Online", color="danger" if is_stale else "success", className="me-2"), f"Serial: {gid} (Last Seen: {last})"], className="d-flex justify-content-between align-items-center"))
     return dbc.ListGroup(items, flush=True)
 
-@app.callback([Output("graph-modal", "is_open"), Output("modal-header", "children"), Output("modal-graph", "figure"), Output("modal-peak-table-container", "children")], [Input({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input("modal-close-btn", "n_clicks_timestamp")], [State({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "id"), State({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "id")], prevent_initial_call=True)
+@app.callback([Output("graph-modal", "is_open"), Output("modal-header", "children"), Output("modal-target", "data"), Output("modal-bearing", "value"), Output("modal-controls", "style")], [Input({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input("modal-close-btn", "n_clicks_timestamp")], [State({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "id"), State({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "id")], prevent_initial_call=True)
 def handle_graph_modal(wf_ts, spec_ts, close_ts, wf_ids, spec_ids):
-    if not ctx.triggered or ctx.triggered[0]['value'] is None: return [no_update]*4
+    if not ctx.triggered or ctx.triggered[0]['value'] is None: return [no_update]*5
     wf_c = [t or 0 for t in wf_ts]; spec_c = [t or 0 for t in spec_ts]; close_c = close_ts or 0
     max_wf = max(wf_c, default=0); max_spec = max(spec_c, default=0); max_open = max(max_wf, max_spec)
-    if close_c > max_open: return [False, no_update, no_update, no_update]
-    
+    if close_c > max_open: return [False, no_update, no_update, no_update, no_update]
+    if max_wf > max_spec: cid = wf_ids[wf_c.index(max_wf)]; gtype = 'wf'
+    else: cid = spec_ids[spec_c.index(max_spec)]; gtype = 'spec'
+    gid, ch = cid['gateway'], cid['channel']
+    bearing, controls = "", {"display": "none"}
+    if gtype == 'spec' and historian.edge_ai_enabled():
+        with closing(get_db_connection()) as conn:
+            bearing = historian.ai_channel_settings(conn, gid, ch).get("bearing", "")
+        controls = {}
+    title = f"{'Waveform' if gtype == 'wf' else 'Spectrum'} - {gid} CH{ch}"
+    return [True, title, {"gid": gid, "ch": ch, "type": gtype}, bearing, controls]
+
+
+@app.callback([Output("modal-graph", "figure"), Output("modal-peak-table-container", "children"), Output("modal-info", "children"), Output("modal-ai", "children"), Output("modal-bearing-list", "children")], [Input("modal-target", "data"), Input("modal-bearing", "value"), Input("modal-families", "value"), Input("modal-harmonics", "value"), Input("modal-scale", "value")], prevent_initial_call=True)
+def render_modal_graph(target, bearing, families, harmonics, scale):
+    """Waveform, or spectrum with fault frequency lines, peak matches and the AI finding (IRIV Edge AI)."""
+    empty = [go.Figure(), html.Div(), None, None, no_update]
+    if not target:
+        return empty
+    gid, ch = target["gid"], target["ch"]
+    with data_lock:
+        d_data = copy.deepcopy(data_storage.get(gid, {}))
+    c_data = d_data.get("channels", {}).get(ch)
+    if not c_data:
+        return [go.Figure().update_layout(title="No data found")] + empty[1:]
+    ts = c_data.get("timestamp", "N/A")
+    if target["type"] == 'wf':
+        y = np.array(c_data.get("waveform_data", [])); fs = c_data.get("waveform_context", {}).get("sampling_freq")
+        if y.size == 0 or not fs:
+            return [go.Figure().update_layout(title="No validated waveform")] + empty[1:]
+        fig = go.Figure(go.Scatter(x=np.arange(y.size) / fs, y=y.tolist(), mode='lines', line=dict(color="#1f3b73", width=1.1)))
+        fig.update_layout(template="plotly_white", title=f"Waveform ({ts})", xaxis_title="Time (s)", yaxis_title="Published waveform (sensor units)", height=470)
+        return [fig] + empty[1:]
     try:
-        if max_wf > max_spec: idx = wf_c.index(max_wf); cid = wf_ids[idx]; gtype = 'wf'
-        else: idx = spec_c.index(max_spec); cid = spec_ids[idx]; gtype = 'spec'
-        gid = cid['gateway']; ch = cid['channel']
-        
-        with data_lock:
-            d_data = copy.deepcopy(data_storage.get(gid, {}))
-            c_data = d_data.get("channels", {}).get(ch)
-            rpm = d_data.get("rpm", 0)
-            if not c_data: return [True, "Error", go.Figure().update_layout(title="No data found"), html.Div()]
-            
-            ts = c_data.get("timestamp", "N/A")
-            if gtype == 'wf':
-                y = np.array(c_data.get("waveform_data", [])); fs = c_data.get("waveform_context", {}).get("sampling_freq")
-                if y.size == 0 or not fs: return [True, "No validated waveform", go.Figure(), html.Div()]
-                x = np.arange(y.size) / fs
-                fig = go.Figure(data=go.Scatter(x=x, y=y.tolist(), mode='lines')).update_layout(title=f"Waveform ({ts})", xaxis_title="Time (s)", yaxis_title="Published waveform (sensor units)")
-                return [True, f"Waveform - {gid} CH{ch}", fig, html.Div()]
-            else:
-                snapshot = dict(c_data.get("spectrum_context", {}), spectrum_data=c_data.get("spectrum_data", []))
-                x, y = spectrum_xy(snapshot)
-                if y.size == 0: return [True, "No Spectrum Data", go.Figure(), html.Div()]
-                fig = go.Figure(data=go.Scatter(x=x, y=y.tolist(), mode='lines')).update_layout(title=f"Spectrum ({ts})", xaxis_title="Hz", yaxis_title="Amp")
-                peaks, _ = find_peaks(y, height=PEAK_HEIGHT_THRESHOLD)
-                ptable = html.Div()
-                if len(peaks)>0:
-                    fig.add_trace(go.Scatter(x=x[peaks], y=y[peaks], mode='markers', marker=dict(color='red', size=8, symbol='x'), name='Peaks'))
-                    rows = [html.Tr([html.Td(f"{x[p]:.2f}"), html.Td(f"{y[p]:.4f}")]) for p in peaks]
-                    ptable = dbc.Table([html.Thead(html.Tr([html.Th("Freq"), html.Th("Amp")])), html.Tbody(rows)], bordered=True, size='sm')
-                if rpm and rpm > 0: fig.add_vline(x=rpm/60, line_dash="dash", line_color="red", annotation_text="1x RPM")
-                return [True, f"Spectrum - {gid} CH{ch}", fig, ptable]
-    except Exception: return [True, "Error", go.Figure(), html.Div()]
+        x, y = spectrum_xy(dict(c_data.get("spectrum_context", {}), spectrum_data=c_data.get("spectrum_data", [])))
+    except ValueError:
+        return [go.Figure().update_layout(title="No spectrum data")] + empty[1:]
+    # This channel's own speed first: one VDS can serve machines that run at different speeds.
+    live_rpm = c_data.get("rpm") or d_data.get("rpm")
+    if not historian.edge_ai_enabled():
+        fig, rows = spectrum_figure(x, y, f"Spectrum ({ts})", rpm=live_rpm if live_rpm and live_rpm > 0 else None)
+        return [fig, ai_views.peak_table(rows), None, None, no_update]
+    with closing(get_db_connection()) as conn:
+        info, settings = ai_views.machine_info(conn, gid, ch, bearing or "")
+        names = ai_views.designations(ai_views.library(conn))
+    rpm, where = ai_views.resolve_rpm(settings, live_rpm)
+    title = f"Spectrum ({ts})" + (f" · {rpm:.0f} RPM" if rpm else "")
+    fig, rows = spectrum_figure(x, y, title, rpm, info, families or [], harmonics or 3, scale == "log")
+    notes = [f"Speed: {rpm:.0f} RPM ({where})." if rpm else "No speed known: set a fixed speed in the asset registry to draw running-speed and bearing lines."]
+    if bearing and info.get("bearing_orders"):
+        notes.append("Bearing " + ai_views.bearing_summary(info["bearing_orders"], rpm) + ".")
+    elif bearing:
+        notes.append(f"Bearing {bearing} is not in the library; add it in the asset registry.")
+    return [fig, ai_views.peak_table(rows), " ".join(notes), ai_views.finding_box(DATA_FOLDER, gid, ch),
+            [html.Option(value=name) for name in names]]
 
 @app.callback(Output('device-config-store', 'data'), [Input({"type": "ch-trend-check", "gateway": ALL, "channel": ALL}, "value"), Input({"type": "rpm-trend-check", "gateway": ALL}, "value")], [State('device-config-store', 'data')], prevent_initial_call=True)
 def save_trend_check_state(ch_v, rpm_v, store):

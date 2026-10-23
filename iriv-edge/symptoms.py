@@ -4,7 +4,6 @@ Everything here is deterministic and explainable: each suggested fault lists
 the evidence that matched, so a person can check it on the diagnostics page.
 """
 
-import csv
 import json
 import math
 import re
@@ -12,45 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
-BEARING_KEYS = ("bpfo", "bpfi", "bsf", "ftf")
+import sys
+
+# The bearing library and frequency maths are shared with the dashboard.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vds_dashboard.fault_frequencies import (  # noqa: E402
+    BEARING_KEYS, TABLE, bearing_orders, designation_keys, expression_hz, frequency_table, load_bearings)
+
 CHANGE_TYPES = {"rise", "harmonics", "floor_rise", "nonsync_rise", "waveform_rise"}
-EXPRESSION = re.compile(r"^(\d+(?:\.\d+)?)?(x|line|bpfo|bpfi|bsf|ftf|gmf|bpf)$")
-
-
-def bearing_orders(balls, ball_diameter, pitch_diameter, contact_angle_deg=0.0):
-    """Defect frequencies as multiples of shaft speed (stationary outer ring)."""
-    r = ball_diameter / pitch_diameter * math.cos(math.radians(contact_angle_deg))
-    return {
-        "bpfo": balls / 2 * (1 - r),
-        "bpfi": balls / 2 * (1 + r),
-        "bsf": pitch_diameter / (2 * ball_diameter) * (1 - r * r),
-        "ftf": 0.5 * (1 - r),
-    }
-
-
-def designation_keys(text):
-    text = str(text).strip().upper()
-    return {text, text.split("-")[0]} - {""}
-
-
-def load_bearings(path):
-    bearings = {}
-    if not Path(path).exists():
-        return bearings
-    with open(path, newline="", encoding="utf-8") as stream:
-        for row in csv.DictReader(stream):
-            try:
-                if all(row.get(k) for k in BEARING_KEYS):
-                    orders = {k: float(row[k]) for k in BEARING_KEYS}
-                else:
-                    orders = bearing_orders(int(row["balls"]), float(row["ball_diameter_mm"]),
-                                            float(row["pitch_diameter_mm"]), float(row.get("contact_angle_deg") or 0))
-            except (KeyError, ValueError):
-                continue
-            orders["designation"] = row["designation"]
-            for key in designation_keys(row["designation"]):
-                bearings.setdefault(key, orders)
-    return bearings
+__all__ = ["BEARING_KEYS", "TABLE", "bearing_orders", "designation_keys", "frequency_table", "load_bearings",
+           "Knowledge", "SpectrumView", "diagnose"]
 
 
 class Knowledge:
@@ -66,7 +36,7 @@ class Knowledge:
         self.channels = config.get("channels", {})
 
     def add_user_bearings(self, entries):
-        """Bearings added in the dashboard's AI page; they override a library entry of the same number."""
+        """Bearings added in the dashboard's asset registry; they override a library entry of the same number."""
         for entry in entries:
             try:
                 orders = {k: float(entry[k]) for k in BEARING_KEYS}
@@ -81,7 +51,7 @@ class Knowledge:
     def machine(self, gid, ch, asset=None, ui=None):
         """Machine facts for a channel.
 
-        Priority: the dashboard AI page, then knowledge/machines.json, then the
+        Priority: the dashboard's AI settings, then knowledge/machines.json, then the
         asset registry (where a bearing number typed into the location also works).
         """
         asset, ui = asset or {}, ui or {}
@@ -171,24 +141,7 @@ class SpectrumView:
 
 
 def frequency(expression, view, info):
-    match = EXPRESSION.match(str(expression))
-    if not match:
-        raise ValueError(f"Unknown frequency {expression!r} in faults.json")
-    factor = float(match.group(1) or 1)
-    token = match.group(2)
-    shaft = view.rpm / 60 if view.rpm else None
-    if token == "line":
-        base = info.get("line_frequency_hz")
-    elif token == "x":
-        base = shaft
-    elif token in BEARING_KEYS:
-        orders = info.get("bearing_orders")
-        base = shaft * orders[token] if shaft and orders else None
-    elif token == "gmf":
-        base = shaft * info["gear_teeth"] if shaft and info.get("gear_teeth") else None
-    else:  # bpf
-        base = shaft * info["blades"] if shaft and info.get("blades") else None
-    return factor * base if base else None
+    return expression_hz(expression, view.rpm, info)
 
 
 def is_synchronous(hz, view, info):
@@ -326,42 +279,3 @@ def diagnose(knowledge, view, info, min_score=0.6, source="spectrum"):
             matches.append({"id": fault["id"], "name": fault["name"], "confidence": round(score / total, 2),
                             "evidence": texts, "advice": fault.get("advice", "")})
     return sorted(matches, key=lambda m: -m["confidence"])
-
-
-TABLE = (
-    ("0.5x", "Half running speed", "Looseness, rub"),
-    ("1x", "Running speed", "Unbalance"),
-    ("2x", "2x running speed", "Misalignment, looseness"),
-    ("3x", "3x running speed", "Misalignment, looseness"),
-    ("2line", "2x mains frequency", "Motor electrical faults"),
-    ("ftf", "Cage (FTF)", "Bearing cage defect"),
-    ("bsf", "Ball spin (BSF)", "Rolling element defect"),
-    ("2bsf", "2x ball spin", "Rolling element defect"),
-    ("bpfo", "Outer race (BPFO)", "Outer race defect"),
-    ("2bpfo", "2x outer race", "Outer race defect"),
-    ("bpfi", "Inner race (BPFI)", "Inner race defect, with 1x sidebands"),
-    ("2bpfi", "2x inner race", "Inner race defect"),
-    ("bpf", "Blade/vane pass", "Impeller or fan problems"),
-    ("2bpf", "2x blade/vane pass", "Impeller or fan problems"),
-    ("gmf", "Gear mesh", "Gear wear or misalignment, with 1x sidebands"),
-    ("2gmf", "2x gear mesh", "Gear wear"),
-)
-
-
-class _Speed:
-    """The minimal view frequency() needs to turn an expression into Hz."""
-
-    def __init__(self, rpm):
-        self.rpm = rpm if rpm and rpm > 0 else None
-
-
-def frequency_table(info, rpm):
-    """Every fault frequency for one machine at its current speed, lowest first."""
-    speed = _Speed(rpm)
-    rows = []
-    for expression, name, used_for in TABLE:
-        hz = frequency(expression, speed, info)
-        if hz:
-            rows.append({"name": name, "hz": round(hz, 2), "order": round(hz / (rpm / 60), 3) if speed.rpm else None,
-                         "used_for": used_for})
-    return sorted(rows, key=lambda row: row["hz"])

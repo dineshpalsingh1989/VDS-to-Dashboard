@@ -6,14 +6,14 @@ The AI advisor reads these files every time it starts. Edit them, then run
 | File | What it holds |
 |---|---|
 | `faults.json` | Fault symptom library: unbalance, misalignment, looseness, bearing defects (normal and envelope spectrum), gear, blade pass, electrical, cavitation and impacting |
-| `bearings.csv` | Bearing defect frequencies (BPFO, BPFI, BSF, FTF) as multiples of shaft speed |
+| `bearings.csv` | 69 bearings with defect frequencies (BPFO, BPFI, BSF, FTF) as multiples of shaft speed |
 | `severity.json` | ISO 20816-3 velocity zones A–D |
 | `machines.example.json` | Template describing each VDS channel; copy it to `machines.json` |
 
 ## Describe your machines
 
-The easiest way is the dashboard's **AI analysis** page, which takes priority over
-this file. For scripted setups, copy `machines.example.json` to `machines.json`. Add one entry per channel,
+The easiest way is the AI analysis section of the dashboard's **Asset registry**,
+which takes priority over this file. For scripted setups, copy `machines.example.json` to `machines.json`. Add one entry per channel,
 named `GATEWAY_ID/CHANNEL`. The most useful fields are:
 
 - **`bearing`:** the bearing number. This turns "unknown peak" into "outer race defect".
@@ -29,11 +29,22 @@ The advisor finds it there too.
 
 ## Add bearings
 
-The easiest way is the **Add a bearing** form on the dashboard's AI analysis page. It
-stores the bearing in the dashboard database, and it overrides a library entry with the same number.
+The easiest way is "Bearing not in the library? Add it" in the AI analysis section of
+the dashboard's Asset registry. It stores the bearing in the dashboard database, and it
+overrides a library entry with the same number.
 
 Only bearings with published geometry are included, so every frequency here can
-be traced to a source. Add your own bearings from the manufacturer's catalogue
+be traced to a source:
+
+- **60xx, 62xx and 63xx deep groove ball bearings** (bore codes 00 to 22): ball count
+  and ball diameter from NSK's online catalogue, with the pitch diameter taken as
+  the average of bore and outside diameter. For the 6203 this matches the published
+  test-rig geometry to 0.1 %.
+- **6205-2RS, 6203-2RS and ZA-2115**: measured geometry published with the Case
+  Western Reserve University and NASA IMS bearing data sets.
+
+Seal and clearance suffixes do not change defect frequencies, so typing 6205ZZ,
+6205-2RS or 6205 DDU C3 all find the 6205. Add your own bearings from the manufacturer's catalogue
 or online bearing frequency calculator:
 
 ```bash

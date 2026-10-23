@@ -117,50 +117,86 @@ class DashboardTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 403)
 
-    def test_ai_page_viewer_reads_but_only_admin_changes_ai_settings(self):
+    def ai_auth(self, user):
+        return {"Authorization": "Basic " + base64.b64encode(user.encode()).decode()}
+
+    def test_ai_setup_in_asset_registry_is_admin_only(self):
         from vds_dashboard import ai_views, historian
 
         with closing(app.get_db_connection()) as conn, conn:
             conn.execute("INSERT INTO channel_state VALUES (?,?,?)", ("g", "1", json.dumps({"rpm": 1480})))
-        auth = lambda user: {"Authorization": "Basic " + base64.b64encode(user.encode()).decode()}  # noqa: E731
-        viewer, admin = auth("viewer:viewer-test"), auth("admin:admin-test")
-        channel = {"id": "ai-channel", "property": "value", "value": json.dumps(["g", "1"])}
-        form = {"machine": "Fan F-1", "location": "Motor DE", "machine_type": "motor", "direction": "radial",
-                "bearing": "6205-2RS", "speed_source": "vds", "fixed_rpm": None, "line_frequency_hz": 50,
-                "gear_teeth": None, "blades": None, "iso_class": "group2_rigid"}
-        state = [channel] + [{"id": "ai-" + k, "property": "value", "value": form[k]} for k in ai_views.FORM_KEYS]
-        switch = {"id": {"type": "ai-gw-switch", "gid": "g"}, "property": "value", "value": True}
+        viewer, admin = self.ai_auth("viewer:viewer-test"), self.ai_auth("admin:admin-test")
+        channel = {"id": "asset-channel", "property": "value", "value": json.dumps(["g", "1"])}
+        form = {"machine_type": "motor", "bearing": "6205-2RS", "speed_source": "vds", "fixed_rpm": None,
+                "line_frequency_hz": 50, "gear_teeth": None, "blades": None, "iso_class": "group2_rigid"}
+        state = [channel, {"id": "ai-gw-enabled", "property": "value", "value": True}] + [
+            {"id": "ai-" + k, "property": "value", "value": form[k]} for k in ai_views.SETUP_KEYS]
+        save = [{"id": "ai-save", "property": "n_clicks", "value": 1}]
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test",
                                      "VDS_EDGE_AI": "1"}):
-            response = self.callback_request("ai_load_channel", [channel], headers=viewer)
-            self.assertEqual(response.status_code, 200)
+            response = self.callback_request("ai_load_setup", [channel], headers=viewer)
             self.assertIn("reports 1480 RPM", response.get_data(as_text=True))
-            rendered = self.callback_request("ai_gateway_list", [
-                {"id": "url", "property": "pathname", "value": "/ai"},
-                {"id": "ai-gateway-result", "property": "children", "value": None}], headers=viewer)
-            self.assertIn('"disabled":true', rendered.get_data(as_text=True).replace(" ", ""))
-            save = [{"id": "ai-save", "property": "n_clicks", "value": 1}]
-            self.assertEqual(self.callback_request("ai_save_channel", save, state, headers=viewer).status_code, 403)
-            toggle = ([[switch]], None, ['{"gid":"g","type":"ai-gw-switch"}.value'])
-            self.assertEqual(self.callback_request("ai_toggle_gateway", toggle[0], headers=viewer,
-                                                   changed=toggle[2]).status_code, 403)
-            self.assertEqual(self.callback_request("ai_save_channel", save, state, headers=admin).status_code, 200)
-            response = self.callback_request("ai_toggle_gateway", toggle[0], headers=admin, changed=toggle[2])
-            self.assertIn("AI analysis for g is on", response.get_data(as_text=True))
+            preview = self.callback_request("ai_bearing_preview", [
+                {"id": "ai-bearing", "property": "value", "value": "6205ZZ"},
+                {"id": "ai-speed_source", "property": "value", "value": "vds"},
+                {"id": "ai-fixed_rpm", "property": "value", "value": None},
+                {"id": "ai-bearing-result", "property": "children", "value": None}], [channel], headers=viewer)
+            self.assertIn("BPFO 88.4 Hz", preview.get_data(as_text=True))
+            self.assertEqual(self.callback_request("ai_save_setup", save, state, headers=viewer).status_code, 403)
+            self.assertIn("AI setup saved", self.callback_request("ai_save_setup", save, state, headers=admin)
+                          .get_data(as_text=True))
         with closing(app.get_db_connection()) as conn:
             self.assertTrue(historian.ai_enabled(conn, "g"))
             self.assertEqual(historian.ai_channel_settings(conn, "g", "1")["bearing"], "6205-2RS")
 
-    def test_ai_page_exists_only_on_iriv_edge_installs(self):
-        route = [{"id": "url", "property": "pathname", "value": "/ai"}]
-        switch = [[{"id": {"type": "ai-gw-switch", "gid": "g"}, "property": "value", "value": True}]]
+    def test_ai_features_exist_only_on_iriv_edge_installs(self):
+        assets = [{"id": "url", "property": "pathname", "value": "/assets"}]
+        old_page = [{"id": "url", "property": "pathname", "value": "/ai"}]
+        save = [{"id": "ai-save", "property": "n_clicks", "value": 1}]
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "0"}):
-            self.assertNotIn("ai-gateways", self.callback_request("display_page", route).get_data(as_text=True))
-            refused = self.callback_request("ai_toggle_gateway", switch,
-                                            changed=['{"gid":"g","type":"ai-gw-switch"}.value'])
+            self.assertNotIn("ai-gw-enabled", self.callback_request("display_page", assets).get_data(as_text=True))
+            from vds_dashboard import ai_views
+            refused = self.callback_request("ai_save_setup", save, [
+                {"id": "asset-channel", "property": "value", "value": json.dumps(["g", "1"])},
+                {"id": "ai-gw-enabled", "property": "value", "value": True}] + [
+                {"id": "ai-" + k, "property": "value", "value": None} for k in ai_views.SETUP_KEYS])
             self.assertIn("only available on IRIV Edge AI", refused.get_data(as_text=True))
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "1"}):
-            self.assertIn("ai-gateways", self.callback_request("display_page", route).get_data(as_text=True))
+            self.assertIn("ai-gw-enabled", self.callback_request("display_page", assets).get_data(as_text=True))
+            self.assertNotIn("ai-gw-enabled", self.callback_request("display_page", old_page).get_data(as_text=True))
+
+    def test_spectrum_popup_draws_fault_lines_for_the_bearing(self):
+        import numpy as np
+
+        values = np.full(801, 1e-4)
+        values[20] = values[71] = 1e-2  # 1x at 25 Hz and a peak near BPFO
+        app.data_storage["g"] = {"rpm": 990, "channels": {"1": {  # another machine on this VDS runs at 990
+            "timestamp": "now", "rpm": 1480, "spectrum_context": {"bandwidth": 1000, "lines": 800},
+            "spectrum_data": values.tolist()}}}
+        target = {"id": "modal-target", "property": "data", "value": {"gid": "g", "ch": "1", "type": "spec"}}
+        inputs = [target, {"id": "modal-bearing", "property": "value", "value": "6205"},
+                  {"id": "modal-families", "property": "value", "value": ["speed", "bearing"]},
+                  {"id": "modal-harmonics", "property": "value", "value": 2},
+                  {"id": "modal-scale", "property": "value", "value": "log"}]
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test",
+                                     "VDS_EDGE_AI": "1"}):
+            response = self.callback_request("render_modal_graph", inputs, headers=self.ai_auth("viewer:viewer-test"))
+            self.assertEqual(response.status_code, 200)
+            body = json.loads(response.get_data(as_text=True))["response"]
+        figure = body["modal-graph"]["figure"]
+        texts = [a["text"] for a in figure["layout"]["annotations"]]
+        for name in ("1x", "2x", "BPFO", "BPFI", "FTF"):
+            self.assertIn(name, texts)
+        lines = next(trace for trace in figure["data"] if trace.get("name") == "Fault lines")
+        self.assertIn("2xBPFO", lines["text"])  # harmonics are drawn and named on hover
+        self.assertEqual(body["modal-graph"]["figure"]["layout"]["yaxis"]["type"], "log")
+        self.assertIn("Speed: 1480 RPM", body["modal-info"]["children"])
+        self.assertIn("Bearing 6205-2RS: BPFO 88.4 Hz", body["modal-info"]["children"])
+        self.assertIn("BPFO", json.dumps(body["modal-peak-table-container"]))
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "0"}):
+            plain = json.loads(self.callback_request("render_modal_graph", inputs).get_data(as_text=True))
+        self.assertEqual([a["text"] for a in plain["response"]["modal-graph"]["figure"]["layout"]["annotations"]],
+                         ["1x"])
 
     def test_cross_origin_action_rejected(self):
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-secret"}):

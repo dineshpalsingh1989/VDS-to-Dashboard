@@ -631,3 +631,21 @@ class DashboardDisplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BearingLibraryTests(unittest.TestCase):
+    def test_typing_a_bearing_number_finds_it_in_the_library(self):
+        from vds_dashboard.fault_frequencies import find_bearing, load_bearings
+        library = load_bearings()
+        self.assertGreaterEqual(len({b["designation"] for b in library.values()}), 67)
+        for typed, expected in (("6205-2RS", "6205-2RS"), ("6205ZZ", "6205-2RS"), ("6308 DDU C3", "6308"),
+                                ("6008", "6008"), ("6316-2Z", "6316")):
+            self.assertEqual(find_bearing(library, typed)["designation"], expected, typed)
+        self.assertIsNone(find_bearing(library, "99999"))
+
+    def test_catalogue_geometry_matches_published_test_rig_values(self):
+        from vds_dashboard.fault_frequencies import bearing_orders, find_bearing, load_bearings
+        nsk_6203 = bearing_orders(8, 6.747, (17 + 40) / 2)  # NSK catalogue: 8 balls of 6.747 mm, 17 x 40 mm
+        published = find_bearing(load_bearings(), "6203")  # CWRU fan-end SKF 6203, measured geometry
+        self.assertAlmostEqual(nsk_6203["bpfo"], published["bpfo"], places=3)
+        self.assertAlmostEqual(nsk_6203["bpfi"], published["bpfi"], places=3)

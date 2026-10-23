@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && mkdir -p /data/config && chown -R vds:vds /data
 COPY --chown=vds:vds app.py ./
 COPY --chown=vds:vds vds_dashboard ./vds_dashboard
+COPY --chown=vds:vds iriv-edge/knowledge/bearings.csv ./iriv-edge/knowledge/bearings.csv
 COPY --chown=vds:vds assets ./assets
 USER vds
 EXPOSE 8050

@@ -238,7 +238,7 @@ intend to remove its persisted data.
 
 The [iriv-edge](iriv-edge/README.md) folder installs the dashboard on a Cytron IRIV
 Edge AI (Raspberry Pi CM5) and adds a self-learning AI advisor. The AI is only available
-on IRIV Edge AI installs; other installs show no AI page. Try it on any computer with
+on IRIV Edge AI installs; other installs show no AI controls. Try it on any computer with
 `python iriv-edge/demo/run_demo.py`. It learns each
 channel's normal spectrum, waveform and readings, then reports changes and matches
 them to a fault symptom library with bearing defect frequencies. Its findings appear
@@ -338,7 +338,7 @@ be re-entered in Alarm management with verified measurement settings.
 | VDS_TREND_RETENTION_DAYS | 0 | Scalar history retention |
 | VDS_RAW_RETENTION_DAYS | 0 | Waveform/spectrum retention |
 | VDS_ALARM_RETENTION_DAYS | 0 | Acknowledged alarm retention |
-| VDS_EDGE_AI | 0 | 1 on IRIV Edge AI installs: AI analysis page and learning samples |
+| VDS_EDGE_AI | 0 | 1 on IRIV Edge AI installs: AI settings, spectrum fault lines and learning samples |
 | VDS_LEARNING_INTERVAL_S | 600 | Seconds between AI learning samples per channel of AI-enabled VDS units; 0 is off |
 | VDS_LEARNING_RETENTION_HOURS | 6 | Hours each channel keeps learning samples |
 | VDS_BIND_ADDRESS | 127.0.0.1 | Compose host publication address |

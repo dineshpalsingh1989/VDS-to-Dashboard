@@ -565,7 +565,7 @@
           "key": true
         }
       ],
-      "advice": "Repeating impacts at a rate that is not a multiple of running speed. Enter the bearing number in the AI page to identify which part."
+      "advice": "Repeating impacts at a rate that is not a multiple of running speed. Enter the bearing number in the asset registry to identify which part."
     }
   ]
 }

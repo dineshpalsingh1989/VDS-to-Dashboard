@@ -247,7 +247,7 @@ class Advisor:
             feedback = conn.execute(
                 "SELECT id, gateway_id, channel, kind, since_ms, fault_id, verdict, user FROM ai_feedback "
                 "WHERE id > ? ORDER BY id", (self.store.watermark("feedback"),)).fetchall()
-        except sqlite3.OperationalError:  # dashboard older than the AI page
+        except sqlite3.OperationalError:  # dashboard older than the AI settings
             rows, bearings, feedback = [], [], []
         self.knowledge = Knowledge(self.knowledge_dir)
         self.knowledge.add_user_bearings(bearings)
@@ -669,7 +669,7 @@ class Advisor:
                 if growth >= 0.5:
                     text += f" The peak is growing about {growth:.1f} dB per day."
             if not rpm:
-                text += " No running speed is known, so faults cannot be named: enter a fixed RPM in the AI page."
+                text += " No running speed is known, so faults cannot be named: enter a fixed RPM in the asset registry."
         elif kind == "waveform":
             if d.get("clipped"):
                 title = f"{label}: clipped waveform"
@@ -699,7 +699,7 @@ class Advisor:
         days = (now_ms - state.get("since_ms", now_ms)) / 86_400_000
         if days >= 3:
             text += (" Changed for %d days; if this is the new normal after maintenance, use Relearn or Repaired "
-                     "in the AI page." % days)
+                     "in the asset registry or the spectrum view." % days)
         score = max([p[1] for p in d.get("peaks", [])] + [abs(math.log(d["value"] / d["normal"])) * 10
                                                            if "value" in d else 0])
         return {"severity": severity, "gateway_id": gid, "channel": ch, "kind": kind, "score": round(score, 1),
@@ -733,7 +733,7 @@ class Advisor:
             notes = []
             if info.get("bearing_missing"):
                 notes.append(f"Bearing {info['bearing_missing']} is not in the bearing library; "
-                             "add it in the AI page.")
+                             "add it in the asset registry.")
             if "spectrum" in states and not states["spectrum"].get("rpm"):
                 notes.append("This VDS reports no speed. Choose a fixed speed and enter the RPM.")
             if states.get("waveform", {}).get("envelope_note"):
@@ -784,7 +784,7 @@ class Advisor:
                 channels.setdefault((gid, ch), set())
         learning = sum(1 for p in channels.values() if "monitoring" not in p)
         if not self.enabled:
-            summary = "AI analysis is off for every VDS. Turn it on per VDS in the AI page."
+            summary = "AI analysis is off for every VDS. Turn it on per VDS in the asset registry."
         else:
             summary = (f"Monitoring {len(channels) - learning} channels, still learning {learning}; "
                        f"{processed} new samples analysed in {elapsed:.1f} s.")
@@ -802,7 +802,7 @@ class Advisor:
                 "findings": findings[:MAX_FINDINGS]}
 
     def publish_tables(self):
-        """Fault frequency tables and trend charts for the AI page, rewritten only when they change."""
+        """Fault frequency tables and trends (tables.json), rewritten only when they change."""
         tables, trends = {}, {}
         for (gid, ch) in sorted(getattr(self, "channels", {})):
             info = self.info(gid, ch)

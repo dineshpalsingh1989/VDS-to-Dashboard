@@ -11,7 +11,7 @@ from dash import Input, Output, State, dcc, html, dash_table, no_update
 from flask import request
 import dash_bootstrap_components as dbc
 
-from . import historian
+from . import ai_views, historian
 from .diagnostics import spectrum_with_rpm, waterfall_figure, waveform_figure, capture_details, spectrum_peaks, recorded_capture, display_rpm
 from .vds import spectrum_xy
 
@@ -69,6 +69,7 @@ def assets_page():
                 "Save asset", id="asset-save", color="primary", className="my-3 d-block"
             ),
             html.Div(id="asset-result"),
+            *([ai_views.asset_section()] if historian.edge_ai_enabled() else []),
         ]
     )
 
@@ -235,6 +236,7 @@ def reports_page():
             dcc.Download(id="backup-file"),
             html.Div(id="backup-result"),
             html.Div(id="retention-summary", className="my-3 text-muted"),
+            *([ai_views.reports_section()] if historian.edge_ai_enabled() else []),
         ]
     )
 
