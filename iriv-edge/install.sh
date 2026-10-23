@@ -64,11 +64,13 @@ sed -e "s#@REPO@#$root#g" -e "s#@DATA_DIR@#$data_dir#g" iriv-edge/vds-ai-advisor
 sudo systemctl daemon-reload
 sudo systemctl enable --now vds-ai-advisor.service
 
-if [[ ! -e "$root/iriv-edge/knowledge/machines.json" ]]; then
-  printf '%s\n' 'Tip: copy iriv-edge/knowledge/machines.example.json to machines.json and add bearing numbers.'
+if compgen -G '/sys/block/nvme*' >/dev/null && ! lsblk -nro MOUNTPOINT /dev/nvme0n1 2>/dev/null | grep -q .; then
+  printf '%s\n' 'An NVMe SSD is fitted but not mounted. To keep AI data on it: sudo bash iriv-edge/setup-ssd.sh'
 fi
-printf '%s\n' 'AI advisor running. It learns each channel first (about 12 hours of running),' \
-  'then reports changes and likely faults in the dashboard health panel.' \
+printf '%s\n' 'AI advisor running. Next, open "AI analysis" in the dashboard to switch the AI on' \
+  'for each VDS and describe each sensor (machine, location, bearing, speed).' \
+  'It learns each channel first (about 12 hours of running), then quietly reports changes' \
+  'and likely faults in the AI page and the health panel.' \
   "Progress: sudo python3 iriv-edge/ai_advisor.py --data-dir $data_dir --status" \
   'Logs: journalctl -u vds-ai-advisor -f' \
   'Settings: /etc/default/vds-ai-advisor, then: sudo systemctl restart vds-ai-advisor'

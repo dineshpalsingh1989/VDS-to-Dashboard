@@ -26,6 +26,8 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=@DATA_DIR@
+# An NVMe SSD for AI data is mounted under /mnt or /media (see setup-ssd.sh).
+ReadWritePaths=-/mnt -/media
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

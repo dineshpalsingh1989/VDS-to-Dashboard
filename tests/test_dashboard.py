@@ -117,6 +117,39 @@ class DashboardTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 403)
 
+    def test_ai_page_viewer_reads_but_only_admin_changes_ai_settings(self):
+        from vds_dashboard import ai_views, historian
+
+        with closing(app.get_db_connection()) as conn, conn:
+            conn.execute("INSERT INTO channel_state VALUES (?,?,?)", ("g", "1", json.dumps({"rpm": 1480})))
+        auth = lambda user: {"Authorization": "Basic " + base64.b64encode(user.encode()).decode()}  # noqa: E731
+        viewer, admin = auth("viewer:viewer-test"), auth("admin:admin-test")
+        channel = {"id": "ai-channel", "property": "value", "value": json.dumps(["g", "1"])}
+        form = {"machine": "Fan F-1", "location": "Motor DE", "machine_type": "motor", "direction": "radial",
+                "bearing": "6205-2RS", "speed_source": "vds", "fixed_rpm": None, "line_frequency_hz": 50,
+                "gear_teeth": None, "blades": None, "iso_class": "group2_rigid"}
+        state = [channel] + [{"id": "ai-" + k, "property": "value", "value": form[k]} for k in ai_views.FORM_KEYS]
+        switch = {"id": {"type": "ai-gw-switch", "gid": "g"}, "property": "value", "value": True}
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-test", "VDS_VIEWER_PASSWORD": "viewer-test"}):
+            response = self.callback_request("ai_load_channel", [channel], headers=viewer)
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("reports 1480 RPM", response.get_data(as_text=True))
+            rendered = self.callback_request("ai_gateway_list", [
+                {"id": "url", "property": "pathname", "value": "/ai"},
+                {"id": "ai-gateway-result", "property": "children", "value": None}], headers=viewer)
+            self.assertIn('"disabled":true', rendered.get_data(as_text=True).replace(" ", ""))
+            save = [{"id": "ai-save", "property": "n_clicks", "value": 1}]
+            self.assertEqual(self.callback_request("ai_save_channel", save, state, headers=viewer).status_code, 403)
+            toggle = ([[switch]], None, ['{"gid":"g","type":"ai-gw-switch"}.value'])
+            self.assertEqual(self.callback_request("ai_toggle_gateway", toggle[0], headers=viewer,
+                                                   changed=toggle[2]).status_code, 403)
+            self.assertEqual(self.callback_request("ai_save_channel", save, state, headers=admin).status_code, 200)
+            response = self.callback_request("ai_toggle_gateway", toggle[0], headers=admin, changed=toggle[2])
+            self.assertIn("AI analysis for g is on", response.get_data(as_text=True))
+        with closing(app.get_db_connection()) as conn:
+            self.assertTrue(historian.ai_enabled(conn, "g"))
+            self.assertEqual(historian.ai_channel_settings(conn, "g", "1")["bearing"], "6205-2RS")
+
     def test_cross_origin_action_rejected(self):
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-secret"}):
             token = base64.b64encode(b"admin:admin-secret").decode()

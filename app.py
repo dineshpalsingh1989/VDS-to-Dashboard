@@ -39,6 +39,7 @@ from vds_dashboard.vds import signature, spectrum_xy
 from vds_dashboard.diagnostics import export_frame, history_figure
 from vds_dashboard import historian
 from vds_dashboard import workspace_views
+from vds_dashboard import ai_views
 from contextlib import closing
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -1020,7 +1021,7 @@ def protect_dashboard():
                     'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
                     'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
                     'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
-                    'disable_ch', 'toggle_time_inputs'} | workspace_views.READ_CALLBACKS
+                    'disable_ch', 'toggle_time_inputs'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS
         status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
         if viewer and not admin and name not in readonly and not status_poll:
             return Response('Administrator access required for this action', 403)
@@ -1187,6 +1188,7 @@ sidebar = html.Div([
         dbc.NavLink('Alarm management', href='/alarms', active='exact', className='text-white'),
         dbc.NavLink('Vibration diagnostics', href='/diagnostics', active='exact', className='text-white'),
         dbc.NavLink('Reports and backups', href='/reports', active='exact', className='text-white'),
+        dbc.NavLink([html.I(className="fas fa-brain me-2"), "AI analysis"], href="/ai", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"), 
@@ -1495,7 +1497,8 @@ def refresh_live_data(message):
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
     pages = {'/assets': workspace_views.assets_page, '/alarms': workspace_views.alarms_page,
-             '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page}
+             '/diagnostics': workspace_views.diagnostics_page, '/reports': workspace_views.reports_page,
+             '/ai': ai_views.ai_page}
     if pathname in pages:
         return pages[pathname]()
     if pathname == '/health':
@@ -2207,6 +2210,7 @@ def apply_asset_settings(gid, ch, settings):
 
 
 workspace_views.register(app, get_db_connection, get_live_snapshot, apply_asset_settings)
+ai_views.register(app, get_db_connection, DATA_FOLDER)
 
 
 def maintenance_thread_func():

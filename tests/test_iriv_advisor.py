@@ -55,7 +55,7 @@ def waveform(rng, impacts=False):
     return x
 
 
-class AdvisorTests(unittest.TestCase):
+class AdvisorBase(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.data = Path(self.directory.name)
@@ -69,10 +69,16 @@ class AdvisorTests(unittest.TestCase):
         self.rng = np.random.default_rng(7)
         self.ms = START_MS
         self.opened = []
+        self.mounts = self.data / "mounts"           # stands in for /proc/mounts
+        self.mounts.write_text("/dev/mmcblk0p2 / ext4 rw 0 0\n")
+        self.sys_block = self.data / "sys-block"     # stands in for /sys/block
+        self.sys_block.mkdir()
+        self.switch("GW1", True)
 
     def tearDown(self):
         for advisor in self.opened:
-            advisor.store.conn.close()
+            if advisor.store:
+                advisor.store.conn.close()
         self.patch.stop()
         self.directory.cleanup()
 
@@ -80,9 +86,24 @@ class AdvisorTests(unittest.TestCase):
         (self.knowledge / "machines.json").write_text(json.dumps({"defaults": {"line_frequency_hz": 50},
                                                                   "channels": channels}))
 
+    def switch(self, gid, enabled):
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_gateway(conn, gid, enabled)
+
     def advisor(self):
-        advisor = ai_advisor.Advisor(self.data, self.knowledge, learn_samples=10, learn_hours=1)
+        advisor = ai_advisor.Advisor(self.data, self.knowledge, learn_samples=10, learn_hours=1,
+                                     mounts_file=self.mounts, sys_block=self.sys_block)
         self.opened.append(advisor)
+        return advisor
+
+    def learned(self, **settings):
+        """An advisor that has finished learning GW1 CH1 on normal running."""
+        if settings:
+            with closing(app.get_db_connection()) as conn, conn:
+                historian.save_ai_channel(conn, "GW1", "1", settings)
+        advisor = self.advisor()
+        self.run_samples(15, rpm=settings.get("_rpm", RPM))
+        self.cycle(advisor)
         return advisor
 
     def add(self, kind, values, gid="GW1", ch="1", rpm=RPM):
@@ -93,15 +114,17 @@ class AdvisorTests(unittest.TestCase):
                 (gid, ch, kind, self.ms, self.ms, rpm, np.asarray(values, "<f4").tobytes(), 4096,
                  BANDWIDTH, LINES, CONTEXT))
 
-    def run_samples(self, count, **kinds):
+    def run_samples(self, count, rpm=RPM, **kinds):
         for _ in range(count):
-            self.add("spectrum", spectrum(self.rng, kinds.get("fault"), kinds.get("loose")))
-            self.add("waveform", waveform(self.rng, kinds.get("impacts")))
+            self.add("spectrum", spectrum(self.rng, kinds.get("fault"), kinds.get("loose")), rpm=rpm)
+            self.add("waveform", waveform(self.rng, kinds.get("impacts")), rpm=rpm)
             self.ms += STEP_MS
 
     def cycle(self, advisor):
         return advisor.cycle(now_ms=self.ms)
 
+
+class AdvisorTests(AdvisorBase):
     def test_learns_first_and_stays_quiet_on_normal_running(self):
         advisor = self.advisor()
         self.run_samples(5)
@@ -227,6 +250,142 @@ class AdvisorTests(unittest.TestCase):
         self.assertIn("Waiting for the dashboard", report["error"])
 
 
+class AdvisorFeatureTests(AdvisorBase):
+    """AI switch, user-entered sensor details, report folders and SSD storage."""
+
+    def test_switched_off_vds_is_not_analysed(self):
+        self.switch("GW1", False)
+        advisor = self.advisor()
+        self.run_samples(15)
+        report = self.cycle(advisor)
+        self.assertEqual(report["channels"], {"monitoring": 0, "learning": 0})
+        self.assertIn("AI analysis is off", report["summary"])
+        self.assertEqual(load_ai_findings_from(report, self.data)[0][0], "info")
+
+    def test_fixed_speed_entered_by_user_replaces_missing_speed_sensor(self):
+        self.machines({})
+        advisor = self.learned(machine="Fan F-1", location="Motor DE", bearing="6205-2RS",
+                               speed_source="fixed", fixed_rpm=RPM, _rpm=None)
+        self.run_samples(2, rpm=None, fault=True)
+        [finding] = self.cycle(advisor)["findings"]
+        self.assertIn("Fan F-1 / Motor DE (GW1 CH1)", finding["message"])
+        self.assertIn("Bearing outer race defect (6205-2RS)", finding["message"])
+
+    def test_missing_speed_and_unknown_bearing_are_explained(self):
+        self.machines({})
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_channel(conn, "GW1", "1", {"bearing": "9999-XX"})
+        advisor = self.advisor()
+        self.run_samples(3, rpm=None)
+        [row] = self.cycle(advisor)["progress"]
+        self.assertIn("Bearing 9999-XX is not in the bearing library", row["notes"][0])
+        self.assertIn("reports no speed", row["notes"][1])
+
+    def test_each_new_finding_gets_an_evidence_folder(self):
+        advisor = self.learned()
+        self.run_samples(2, fault=True)
+        [finding] = self.cycle(advisor)["findings"]
+        folder = Path(finding["report"])
+        self.assertTrue(folder.is_dir())
+        self.assertEqual(folder.parent.parent, self.data / "ai" / "reports")
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["finding.json", "report.md", "spectrum.csv"])
+        self.assertIn("## Likely causes", (folder / "report.md").read_text(encoding="utf-8"))
+        self.assertEqual((folder / "spectrum.csv").read_text().splitlines()[0],
+                         "frequency_hz,current_db,normal_db,change_db")
+        [entry] = json.loads((self.data / "ai" / "index.json").read_text())
+        self.assertIn("likely Bearing outer race defect", entry["title"])
+        log = (folder.parent / "activity.log").read_text(encoding="utf-8")
+        self.assertIn("New finding, report in", log)
+        self.run_samples(3)
+        self.cycle(advisor)
+        self.assertIn("is back to its learned normal", (folder.parent / "activity.log").read_text(encoding="utf-8"))
+
+    def test_relearn_requested_from_dashboard(self):
+        advisor = self.learned()
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.request_ai_relearn(conn, "GW1", "1", now=time.time())
+        self.run_samples(1)
+        self.assertEqual(self.cycle(advisor)["channels"], {"monitoring": 0, "learning": 1})
+
+    def test_scan_rate_is_capped(self):
+        advisor = self.advisor()
+        advisor.max_rate = 100
+        self.run_samples(10)
+        started = time.monotonic()
+        self.cycle(advisor)
+        self.assertGreaterEqual(time.monotonic() - started, 0.18)  # 20 samples at 100 per second
+
+    def test_unmounted_ssd_is_announced(self):
+        (self.sys_block / "nvme0n1").mkdir()
+        report = self.cycle(self.advisor())
+        self.assertEqual(report["storage"]["state"], "ssd_unmounted")
+        self.assertIn("setup-ssd.sh", report["storage"]["message"])
+
+    def test_ai_data_moves_to_mounted_ssd_after_announcement(self):
+        ssd = self.data / "ssd"
+        ssd.mkdir()
+        advisor = self.learned()
+        self.run_samples(2, fault=True)
+        self.cycle(advisor)
+        self.mounts.write_text(f"/dev/mmcblk0p2 / ext4 rw 0 0\n/dev/nvme0n1p1 {ssd} ext4 rw 0 0\n")
+        self.run_samples(1)
+        report = self.cycle(advisor)
+        self.assertEqual(report["storage"]["state"], "pending")
+        self.assertIn("will transfer its data to the SSD", report["storage"]["message"])
+        self.assertTrue((self.data / "ai" / "learning.db").exists())
+        self.run_samples(1)
+        report = self.cycle(advisor)
+        self.assertEqual(report["storage"]["state"], "ssd")
+        self.assertTrue((ssd / "vds-ai" / "learning.db").exists())
+        self.assertFalse((self.data / "ai" / "learning.db").exists())
+        self.assertTrue(any((ssd / "vds-ai" / "reports").rglob("report.md")))
+        self.assertEqual(report["channels"], {"monitoring": 1, "learning": 0}, "learning survived the move")
+        advisor.close()
+        self.opened.remove(advisor)
+        restarted = self.advisor()
+        self.assertEqual(self.cycle(restarted)["storage"]["state"], "ssd")
+        restarted.close()
+        self.opened.remove(restarted)
+        shutil.rmtree(ssd)
+        missing = self.advisor()
+        report = self.cycle(missing)
+        self.assertEqual(report["storage"]["state"], "ssd_missing")
+        self.assertEqual(load_ai_findings_from(report, self.data)[0][:2], ("warning", "AI storage"))
+
+
+def load_ai_findings_from(report, data):
+    ai_advisor.write_report(data, report)
+    return load_ai_findings(str(data))
+
+
+class AiSettingsTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.addCleanup(self.conn.close)
+        historian.setup_schema(self.conn)
+
+    def test_fixed_speed_needs_rpm_and_choices_are_checked(self):
+        with self.assertRaises(ValueError):
+            historian.save_ai_channel(self.conn, "GW1", "1", {"speed_source": "fixed"})
+        with self.assertRaises(ValueError):
+            historian.save_ai_channel(self.conn, "GW1", "1", {"machine_type": "rocket"})
+        with self.assertRaises(ValueError):
+            historian.save_ai_channel(self.conn, "GW1", "5", {})
+        saved = historian.save_ai_channel(self.conn, "GW1", "1", {
+            "machine": " Pump P-1 ", "speed_source": "fixed", "fixed_rpm": "1480", "gear_teeth": "23"})
+        self.assertEqual((saved["machine"], saved["fixed_rpm"], saved["gear_teeth"]), ("Pump P-1", 1480.0, 23))
+
+    def test_relearn_request_survives_later_edits(self):
+        historian.request_ai_relearn(self.conn, "GW1", "1", now=100)
+        historian.save_ai_channel(self.conn, "GW1", "1", {"machine": "Fan"})
+        self.assertEqual(historian.ai_channel_settings(self.conn, "GW1", "1")["relearn_at"], 100)
+
+    def test_switch_defaults_off(self):
+        self.assertFalse(historian.ai_enabled(self.conn, "GW1"))
+        historian.save_ai_gateway(self.conn, "GW1", True)
+        self.assertTrue(historian.ai_enabled(self.conn, "GW1"))
+
+
 class LearningSampleTests(unittest.TestCase):
     """The dashboard keeps a bounded number of samples for the advisor."""
 
@@ -255,12 +414,27 @@ class LearningSampleTests(unittest.TestCase):
             historian.store_learning_samples(self.conn, self.packet(step * 600, step), "{}", 600, retention_hours=6)
         self.assertEqual(self.count(), [("spectrum", 37), ("waveform", 37)])
 
-    def test_disabled_unless_configured(self):
+    def test_interval_defaults_to_ten_minutes_and_zero_turns_it_off(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VDS_LEARNING_INTERVAL_S", None)
-            self.assertEqual(historian.learning_interval(), 0)
-        with patch.dict(os.environ, {"VDS_LEARNING_INTERVAL_S": "600"}):
             self.assertEqual(historian.learning_interval(), 600)
+        with patch.dict(os.environ, {"VDS_LEARNING_INTERVAL_S": "0"}):
+            self.assertEqual(historian.learning_interval(), 0)
+
+    def test_samples_are_only_kept_for_vds_units_with_ai_switched_on(self):
+        from vds_dashboard.vds import normalize_packet
+        fixture = Path(__file__).parent / "fixtures" / "vds130_messages.json"
+        messages = json.loads(fixture.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, "DB_FILE", os.path.join(folder, "t.db")):
+            app.setup_database()
+            with closing(app.get_db_connection()) as conn:
+                for enabled, expected in ((False, []), (True, [("spectrum", 1), ("waveform", 1)])):
+                    with conn:
+                        historian.save_ai_gateway(conn, "VDS-DEMO", enabled)
+                        for message in messages:
+                            historian.store_packet(conn, normalize_packet(message, received_at=START_MS / 1000))
+                    self.assertEqual(conn.execute("SELECT kind, COUNT(*) FROM learning_samples GROUP BY kind")
+                                     .fetchall(), expected)
 
     def test_old_samples_are_pruned(self):
         received = START_MS / 1000

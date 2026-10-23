@@ -128,7 +128,15 @@ def load_ai_findings(data_folder, now=None, max_age=600, limit=20):
             continue
         severity = item.get("severity") if item.get("severity") in AI_SEVERITIES else "info"
         findings.append((severity, "AI advisor", str(item.get("message", ""))[:700]))
+    summary = str(report.get("summary") or "No advisor summary available.")[:300]
     if not findings:
-        summary = str(report.get("summary") or "No advisor summary available.")[:300]
-        findings.append(("success", "AI advisor", "No unusual vibration. " + summary))
+        if report.get("enabled_gateways") == []:
+            findings.append(("info", "AI advisor", summary))
+        else:
+            findings.append(("success", "AI advisor", "No unusual vibration. " + summary))
+    storage = report.get("storage") if isinstance(report.get("storage"), dict) else {}
+    state = storage.get("state")
+    if state in ("pending", "transferring", "ssd_unmounted", "ssd_missing", "failed"):
+        severity = "warning" if state in ("ssd_missing", "failed") else "info"
+        findings.insert(0, (severity, "AI storage", str(storage.get("message", ""))[:300]))
     return findings

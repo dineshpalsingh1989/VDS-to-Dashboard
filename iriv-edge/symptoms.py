@@ -65,17 +65,26 @@ class Knowledge:
         self.defaults = config.get("defaults", {})
         self.channels = config.get("channels", {})
 
-    def machine(self, gid, ch, asset=None):
-        """Machine facts for a channel: machines.json first, then the dashboard asset registry."""
-        asset = asset or {}
+    UI_KEYS = ("machine_type", "direction", "bearing", "line_frequency_hz", "gear_teeth", "blades", "iso_class")
+
+    def machine(self, gid, ch, asset=None, ui=None):
+        """Machine facts for a channel.
+
+        Priority: the dashboard AI page, then knowledge/machines.json, then the
+        asset registry (where a bearing number typed into the location also works).
+        """
+        asset, ui = asset or {}, ui or {}
         info = dict(self.defaults)
         info.update(self.channels.get(f"{gid}/{ch}", {}))
+        info.update({k: ui[k] for k in self.UI_KEYS if ui.get(k) not in (None, "")})
+        ui_label = " / ".join(ui.get(k) for k in ("machine", "location") if ui.get(k))
+        if ui_label:
+            info["name"] = ui_label
         label = " / ".join(asset.get(k) for k in ("site", "machine", "location") if asset.get(k))
         info.setdefault("name", label or f"{gid} CH{ch}")
         if asset.get("direction"):
             info.setdefault("direction", asset["direction"])
         if "bearing" not in info:
-            # Typing the bearing number into the asset registry location also works.
             for token in re.split(r"[\s,;/()]+", f"{asset.get('machine', '')} {asset.get('location', '')}"):
                 if token and designation_keys(token) & self.bearings.keys():
                     info["bearing"] = token
@@ -92,6 +101,8 @@ class Knowledge:
                 if key in self.bearings:
                     info["bearing_orders"] = self.bearings[key]
                     break
+            else:
+                info["bearing_missing"] = str(bearing)
         return info
 
     def iso_zone(self, info, velocity, unit, detection):

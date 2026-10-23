@@ -42,6 +42,9 @@ def setup_schema(conn):
         CREATE INDEX IF NOT EXISTS idx_learning_recent
             ON learning_samples (gateway_id, channel, kind, received_ms);
         CREATE INDEX IF NOT EXISTS idx_learning_received ON learning_samples (received_ms);
+        CREATE TABLE IF NOT EXISTS ai_settings (
+            gateway_id TEXT, channel TEXT, settings TEXT NOT NULL,
+            PRIMARY KEY (gateway_id, channel));
     """)
     for table in ("trends", "trends_latest", "raw_waveforms", "raw_spectrum"):
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -101,12 +104,87 @@ def save_rule(conn, gid, channel, rule):
     )
 
 
+AI_MACHINE_TYPES = ("motor", "pump", "fan", "gearbox", "compressor", "other")
+AI_DIRECTIONS = ("radial", "horizontal", "vertical", "axial")
+AI_ISO_CLASSES = ("group1_rigid", "group1_flexible", "group2_rigid", "group2_flexible")
+
+
+def ai_enabled(conn, gid):
+    """The per-VDS AI switch. Off until a user turns it on in the AI page."""
+    return bool(get_json(conn, "ai_settings", "settings", gid, "", {}).get("enabled"))
+
+
+def save_ai_gateway(conn, gid, enabled):
+    gid = str(gid or "").strip()
+    if not gid or len(gid) > 64:
+        raise ValueError("Unknown VDS")
+    conn.execute(
+        "INSERT OR REPLACE INTO ai_settings VALUES (?,?,?)",
+        (gid, "", json.dumps({"enabled": bool(enabled)})),
+    )
+
+
+def ai_channel_settings(conn, gid, channel):
+    return get_json(conn, "ai_settings", "settings", gid, channel, {})
+
+
+def _optional_int(value, low, high, label):
+    if value in (None, ""):
+        return None
+    number = int(value)
+    if not low <= number <= high:
+        raise ValueError(f"{label} must be between {low} and {high}")
+    return number
+
+
+def save_ai_channel(conn, gid, channel, form):
+    """Validate and store what the user told the AI about one sensor."""
+    if channel not in ("1", "2", "3", "4") or not gid:
+        raise ValueError("Invalid channel")
+    text = {key: str(form.get(key) or "").strip()[:64] for key in ("machine", "location", "bearing")}
+    choices = (("machine_type", AI_MACHINE_TYPES), ("direction", AI_DIRECTIONS), ("iso_class", AI_ISO_CLASSES))
+    for key, allowed in choices:
+        value = form.get(key) or ""
+        if value and value not in allowed:
+            raise ValueError(f"Unknown {key.replace('_', ' ')}")
+        text[key] = value
+    speed_source = form.get("speed_source") or "vds"
+    if speed_source not in ("vds", "fixed"):
+        raise ValueError("Speed source must be the VDS speed sensor or a fixed speed")
+    fixed_rpm = form.get("fixed_rpm")
+    fixed_rpm = None if fixed_rpm in (None, "") else float(fixed_rpm)
+    if fixed_rpm is not None and not 1 <= fixed_rpm <= 60000:
+        raise ValueError("Fixed speed must be between 1 and 60000 RPM")
+    if speed_source == "fixed" and fixed_rpm is None:
+        raise ValueError("Enter the machine speed in RPM, or choose the VDS speed sensor")
+    line = int(form.get("line_frequency_hz") or 50)
+    if line not in (50, 60):
+        raise ValueError("Line frequency must be 50 or 60 Hz")
+    previous = ai_channel_settings(conn, gid, channel)
+    settings = dict(
+        text, speed_source=speed_source, fixed_rpm=fixed_rpm, line_frequency_hz=line,
+        gear_teeth=_optional_int(form.get("gear_teeth"), 1, 1000, "Gear teeth"),
+        blades=_optional_int(form.get("blades"), 1, 100, "Blades or vanes"),
+    )
+    if previous.get("relearn_at"):
+        settings["relearn_at"] = previous["relearn_at"]
+    conn.execute("INSERT OR REPLACE INTO ai_settings VALUES (?,?,?)", (gid, channel, json.dumps(settings)))
+    return settings
+
+
+def request_ai_relearn(conn, gid, channel, now=None):
+    """Ask the advisor to forget a channel, for example after a repair."""
+    settings = ai_channel_settings(conn, gid, channel)
+    settings["relearn_at"] = time.time() if now is None else now
+    conn.execute("INSERT OR REPLACE INTO ai_settings VALUES (?,?,?)", (gid, channel, json.dumps(settings)))
+
+
 def learning_interval():
-    """Seconds between learning samples per channel; 0 (default) turns sampling off."""
+    """Seconds between learning samples per channel of an AI-enabled VDS; 0 turns sampling off."""
     try:
-        return max(0, int(os.environ.get("VDS_LEARNING_INTERVAL_S", "0")))
+        return max(0, int(os.environ.get("VDS_LEARNING_INTERVAL_S", "600")))
     except ValueError:
-        return 0
+        return 600
 
 
 def learning_retention_hours():
@@ -200,7 +278,7 @@ def store_packet(conn, packet, recording=False):
             )
             accepted_metrics[metric] = value
     interval = learning_interval()
-    if interval and not packet.get("quality_issues"):
+    if interval and not packet.get("quality_issues") and ai_enabled(conn, gid):
         store_learning_samples(conn, packet, context, interval, learning_retention_hours())
     # Scalar history is continuous; raw arrays are opt-in recording data.
     if recording and packet["waveform_data"] is not None:

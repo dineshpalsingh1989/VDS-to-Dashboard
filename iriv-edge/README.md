@@ -21,6 +21,9 @@ each change against a library of machine fault symptoms.
 | `ai_advisor.py` | The advisor: learns, detects changes, writes findings for the dashboard |
 | `learning.py` | Self-learning profiles per channel, speed and setting |
 | `symptoms.py` | Matches changes against the fault library |
+| `storage.py` | Detects the NVMe SSD and keeps AI data there when mounted |
+| `reports.py` | Writes the daily report folders |
+| `setup-ssd.sh` | Prepares and mounts a blank NVMe SSD (asks before erasing) |
 | `bearing_tool.py` | Adds bearings and shows their defect frequencies |
 | `knowledge/` | Fault symptoms, bearings, ISO severity zones, your machine list. See [knowledge/README.md](knowledge/README.md) |
 | `vds-ai-advisor.service` | Hardened systemd unit |
@@ -34,18 +37,28 @@ bash iriv-edge/install.sh            # build the dashboard on the device
 bash iriv-edge/install.sh --image    # or pull the published container
 ```
 
-The installer sets `VDS_LEARNING_INTERVAL_S=600` in `.env`. The dashboard then
-keeps one spectrum and one waveform per channel every 10 minutes for the advisor.
-Then describe your machines and bearings in `knowledge/machines.json`. Copy
-`knowledge/machines.example.json` to start.
+Then open **AI analysis** in the dashboard sidebar:
+
+1. **Switch the AI on per VDS.** Only switched-on units are analysed, and only
+   they keep learning samples (one spectrum and waveform per channel every
+   10 minutes, set by `VDS_LEARNING_INTERVAL_S`).
+2. **Describe each sensor.** Enter the machine name, sensor location, machine type,
+   direction, bearing number, gear teeth or blades, mains frequency and ISO class.
+   The page shows whether the VDS reports a speed. If it has no speed sensor,
+   choose **Fixed speed** and type the RPM, so the AI can still find running-speed
+   and bearing frequencies.
+3. **Watch learning progress** and read the **AI reports** on the same page. Viewers
+   can read everything there, but only an administrator can change it.
+
+`knowledge/machines.json` still works for scripted setups. Settings typed into the
+AI page take priority over it.
 
 ```bash
 sudo python3 iriv-edge/ai_advisor.py --data-dir <data> --status   # learning progress per channel
 journalctl -u vds-ai-advisor -f                                    # advisor log
 ```
 
-For a native install without Docker, set `VDS_LEARNING_INTERVAL_S=600` in the
-dashboard's environment and run `install.sh --data-dir <dashboard data folder>`.
+For a native install without Docker, run `install.sh --data-dir <dashboard data folder>`.
 
 ## How it learns
 
@@ -64,11 +77,46 @@ dashboard's environment and run `install.sh --data-dir <dashboard data folder>`.
    behind it.
 4. **Keeps learning, safely.** Normal samples keep refining the picture, so slow
    seasonal drift is followed. Samples that look abnormal are never learned, so a
-   growing fault cannot become "normal". After a repair, relearn the channel:
+   growing fault cannot become "normal". After a repair, press **Relearn this
+sensor** in the AI page.
+5. **Quiet background scanning.** It scans at most 20 learning samples per second
+   (`--max-rate`), at low CPU and disk priority, so it never competes with the dashboard.
 
-```bash
-sudo python3 iriv-edge/ai_advisor.py --data-dir <data> --relearn GW1/1
+## Report folders
+
+Each day the AI works it writes a folder you can open if anything looks wrong:
+
 ```
+<AI data>/reports/2026-10-23/
+    activity.log                         what it analysed each cycle, new and cleared findings
+    143005_GW1_CH1_spectrum/             one folder per new finding
+        report.md                        plain-language report: what changed, likely causes, what to check
+        finding.json                     the finding as data
+        spectrum.csv                     current and learned-normal level per frequency
+        waveform.json                    waveform features against normal (waveform findings)
+```
+
+The 50 latest reports can also be read in the AI page. Folders older than 180 days
+are removed (`--report-days`).
+
+## NVMe SSD
+
+The IRIV has an M.2 slot for an NVMe SSD, which is faster and survives far more
+writes than the built-in eMMC.
+
+- **SSD already mounted.** The advisor notices it and announces in the dashboard
+  that it will transfer its data to the SSD. On the next cycle it copies its
+  learning file and report folders, verifies the copy and switches over. Learning
+  is kept.
+- **Blank SSD.** The dashboard says an SSD is fitted but not set up. Run
+  `sudo bash iriv-edge/setup-ssd.sh`. It refuses to touch a disk that has data
+  and asks you to type `ERASE nvme0n1` before formatting. Use `--use-existing`
+  to mount an SSD that is already formatted.
+- **SSD removed later.** AI analysis pauses with a warning instead of starting
+  over on the eMMC, and resumes when the SSD is back.
+
+The move covers the AI's own data. The dashboard database stays where Docker
+keeps it.
 
 This is the advisor's actual output for a simulated machine that developed an
 outer race fault on a 6205-2RS bearing:
@@ -91,7 +139,8 @@ The advisor is built so that more sensors make it work longer, never freeze.
 - **Fixed sample rate.** The dashboard keeps one spectrum and waveform per channel
   per interval, however fast sensors publish. Each channel trims its own samples
   older than `VDS_LEARNING_RETENTION_HOURS`, which defaults to 6, so storage stays bounded.
-- **Time budget.** Each cycle stops after half its interval. If it ever falls
+- **AI switch per VDS.** Only VDS units you switch on are sampled and analysed.
+- **Time budget and rate cap.** Each cycle stops after half its interval, and scanning is capped at 20 samples per second. If it ever falls
   behind, it catches up in later cycles and shows its backlog in the health panel.
 - **Separate learning file.** The learned profiles live in `ai/learning.db`. The
   historian is opened read-only, so the advisor never competes with dashboard writes.
@@ -143,6 +192,6 @@ ideas are built yet:
 
 The advisor follows the project rules in `AGENTS.md`: advisory agents report
 findings and must not issue machine commands. The service has no network access
-and no device access. It opens the historian read-only and writes only to
-`<data>/ai/`. The dashboard caps advisor findings at "warning", so they never
+and no device access. It opens the historian read-only and writes only to its
+own folder (`<data>/ai/`, or the SSD). The dashboard caps advisor findings at "warning", so they never
 appear as alarms.

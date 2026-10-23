@@ -12,7 +12,8 @@ The AI advisor reads these files every time it starts. Edit them, then run
 
 ## Describe your machines
 
-Copy `machines.example.json` to `machines.json`. Add one entry per channel,
+The easiest way is the dashboard's **AI analysis** page, which takes priority over
+this file. For scripted setups, copy `machines.example.json` to `machines.json`. Add one entry per channel,
 named `GATEWAY_ID/CHANNEL`. The most useful fields are:
 
 - **`bearing`:** the bearing number. This turns "unknown peak" into "outer race defect".
