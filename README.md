@@ -57,8 +57,8 @@ Set `VDS_IMAGE=ghcr.io/dineshpalsingh1989/wilcoxon-vds:1.1.0` in `.env` to pin a
 release. No GitHub login is required. If an image download is unavailable, use
 `--build` to build from the public source instead.
 
-Stop with `docker compose down`. For image-only installs, use
-`docker compose -f compose.image.yaml down`. Keep the named volume to retain
+Stop with `docker compose --env-file .env -f docker/compose.yaml down`. For image-only installs, use
+`docker compose --env-file .env -f docker/compose.image.yaml down`. Keep the named volume to retain
 SQLite data. Both Compose files use the project name `wilcoxon-vds`; existing
 installs should set `COMPOSE_PROJECT_NAME` to their original project name before
 upgrading so they continue using their existing volume.
@@ -208,10 +208,11 @@ broker changes. Restart Application restarts Python; it does not reboot the host
 ```powershell
 Copy-Item .env.example .env
 # Edit .env and set a strong VDS_ADMIN_PASSWORD before the next command.
-docker compose up -d --build
+docker compose --env-file .env -f docker/compose.yaml up -d --build
 ```
 
-Compose reads `.env`; running `python app.py` directly does not load it.
+Docker files live in `docker/`. Run Compose from the repository root and pass
+`--env-file .env` so it reads the root `.env`; running `python app.py` directly does not load it.
 The image runs as UID 10001 with dropped capabilities. Compose uses a read-only
 root filesystem, a temporary /tmp, and a persistent named volume at /data.
 SQLite, backups, reports, and broker configuration survive container replacement.
@@ -230,7 +231,7 @@ Modbus endpoints are separate from the dashboard login. No privileged container
 or host networking is needed for the default dashboard deployment. Host time
 administration is intentionally unavailable inside the restricted container.
 
-Stop the stack with `docker compose down`. Do not add `--volumes` unless you
+Stop the stack with `docker compose --env-file .env -f docker/compose.yaml down`. Do not add `--volumes` unless you
 intend to remove its persisted data.
 
 ## Commission a device

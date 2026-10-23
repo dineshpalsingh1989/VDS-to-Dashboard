@@ -65,7 +65,7 @@ class LinuxLauncherTests(unittest.TestCase):
         self.launch("--image")
         self.assertEqual((self.root / ".env").read_text(), config)
         calls = (self.root / "calls.log").read_text()
-        self.assertIn("compose -f compose.image.yaml pull", calls)
+        self.assertIn("compose --env-file .env -f docker/compose.image.yaml pull", calls)
         self.assertNotIn("--build", calls)
 
 

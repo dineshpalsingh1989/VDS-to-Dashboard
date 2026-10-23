@@ -38,20 +38,20 @@ if ! grep -Eq '^VDS_ADMIN_PASSWORD=.+$' .env && [[ -z "${VDS_ADMIN_PASSWORD:-}" 
 fi
 chmod 600 .env
 
-file=compose.yaml
+file=docker/compose.yaml
 if [[ "$mode" == --image ]]; then
-  file=compose.image.yaml
-  if ! docker compose -f "$file" pull; then
+  file=docker/compose.image.yaml
+  if ! docker compose --env-file .env -f "$file" pull; then
     printf '%s\n' 'Image download failed. Check package visibility/authentication, or run this script with --build.' >&2
     exit 1
   fi
-  docker compose -f "$file" up -d --wait --wait-timeout 120
+  docker compose --env-file .env -f "$file" up -d --wait --wait-timeout 120
 else
-  docker compose -f "$file" up -d --build --wait --wait-timeout 120
+  docker compose --env-file .env -f "$file" up -d --build --wait --wait-timeout 120
 fi
 
 printf '%s\n' 'Dashboard is healthy. Default address: http://127.0.0.1:8050' \
   'Login: VDS_ADMIN_USER and VDS_ADMIN_PASSWORD from .env (or your shell environment).' \
   'Configure your MQTT broker in the dashboard; this bundle does not start a broker.' \
-  "Logs: docker compose -f $file logs --tail=100 dashboard" \
-  "Stop: docker compose -f $file down (keep the data volume)."
+  "Logs: docker compose --env-file .env -f $file logs --tail=100 dashboard" \
+  "Stop: docker compose --env-file .env -f $file down (keep the data volume)."

@@ -1,7 +1,9 @@
 name: wilcoxon-vds
 services:
   dashboard:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     restart: unless-stopped
     init: true
     ports:

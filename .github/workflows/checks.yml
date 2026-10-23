@@ -48,15 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build production image
-        run: docker build -t wilcoxon-vds:ci .
+        run: docker build -f docker/Dockerfile -t wilcoxon-vds:ci .
       - name: Non-root startup, HTTP, and backup checks
         run: bash scripts/container-smoke.sh wilcoxon-vds:ci
       - name: Validate both Compose files
         env:
           VDS_ADMIN_PASSWORD: ci-configuration-check-only
         run: |
-          docker compose config --quiet
-          docker compose -f compose.image.yaml config --quiet
+          docker compose -f docker/compose.yaml config --quiet
+          docker compose -f docker/compose.image.yaml config --quiet
 
   package:
     name: Publish Linux container package
@@ -91,6 +91,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: docker/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.metadata.outputs.tags }}
@@ -112,7 +113,7 @@ jobs:
         run: |
           mkdir -p dist
           git archive --format=tar.gz --prefix=wilcoxon-vds/ --output="dist/wilcoxon-vds-linux.tar.gz" HEAD
-          cp compose.image.yaml dist/compose.image.yaml
+          cp docker/compose.image.yaml dist/compose.image.yaml
           cp .env.example dist/vds.env.example
           cd dist
           sha256sum -- ./*.tar.gz compose.image.yaml vds.env.example > SHA256SUMS
