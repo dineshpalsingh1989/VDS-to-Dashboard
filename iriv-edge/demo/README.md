@@ -9,7 +9,11 @@ pip install -r requirements.txt          # once, from the repository folder
 python iriv-edge/demo/run_demo.py         # about 1-2 minutes to simulate 4 days
 ```
 
-Then open **http://127.0.0.1:8060/ai**. Press Ctrl+C to stop.
+On Windows you can instead double-click `iriv-edge\demo\run_demo.cmd`. It uses
+[uv](https://docs.astral.sh/uv/) when installed, so Python itself is not needed.
+
+Wait until the window says **Open http://127.0.0.1:8060/ai**, then open that address.
+The page only works while that window stays open. Press Ctrl+C to stop.
 
 | Option | Meaning |
 |---|---|
