@@ -182,10 +182,14 @@ def main(argv=None):
         advisor.close()
         return report
 
-    def keep_scanning():  # so Confirmed / Wrong / Repaired in the spectrum view take effect
+    def keep_scanning():
+        """Keep the plant live: new readings every 20 s, and an AI scan so feedback buttons take effect."""
         while True:
             time.sleep(20)
             try:
+                now_ms = int(time.time() * 1000)
+                for machine in MACHINES:
+                    feed(app, machine, *capture(machine, 1.0, rng), now_ms)
                 write_report(out / "data", advisor.cycle())
             except Exception as error:  # noqa: BLE001 - keep the demo server alive
                 print("AI scan skipped:", error)

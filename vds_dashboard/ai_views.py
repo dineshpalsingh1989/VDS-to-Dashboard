@@ -254,6 +254,26 @@ def finding_box(data_folder, gid, ch):
     return cards
 
 
+def channel_badges(data_folder):
+    """Small AI status badge for each channel card on the dashboard."""
+    report = read_json(os.path.join(data_folder, "ai", "findings.json"), {})
+    badges = {}
+    for row in report.get("progress", []):
+        learning = row.get("phase") == "learning"
+        badges[(row.get("gateway_id"), row.get("channel"))] = dbc.Badge(
+            [html.I(className="fas fa-brain me-1"), "AI learning" if learning else "AI normal"],
+            className="ai-badge " + ("ai-learning" if learning else "ai-ok"), title="AI analysis status")
+    for item in report.get("findings", []):
+        key = (item.get("gateway_id"), item.get("channel"))
+        if not key[0]:
+            continue
+        title = str(item.get("title", ""))
+        short = title.split("likely ", 1)[1] if "likely " in title else title.split(": ", 1)[-1]
+        badges[key] = dbc.Badge([html.I(className="fas fa-brain me-1"), short[:40]],
+                                className="ai-badge ai-finding", title=str(item.get("message", ""))[:300])
+    return badges
+
+
 def peak_table(rows):
     if not rows:
         return html.Div()

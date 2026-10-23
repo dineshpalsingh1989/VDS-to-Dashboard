@@ -1060,8 +1060,9 @@ def download_data_file(filename):
     snapshot.seek(0)
     return send_file(snapshot, mimetype='application/x-sqlite3', as_attachment=True, download_name=filename)
 
-def create_channel_box(channel_id, gateway_id, data, device_config):
+def create_channel_box(channel_id, gateway_id, data, device_config, ai_badges=None):
     ch = str(channel_id)
+    ai_badges = ai_badges or {}
     base_3d = {"height": "100%", "backgroundColor": "#ffffff", "borderRadius": "8px", "boxShadow": "0 4px 12px rgba(0,0,0,0.1)", "border": "none"}
     active_style = {**base_3d, "borderTop": "4px solid #198754"}
     inactive_style = {**base_3d, "borderTop": "4px solid #dc3545"}
@@ -1134,20 +1135,44 @@ def create_channel_box(channel_id, gateway_id, data, device_config):
         label_input_div
     ], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6", "padding": "0.75rem 1rem"})
 
+    quality = freshness(data or {})["status"]
+    metrics_now = (data or {}).get('metrics') or {}
+    metadata_now = (data or {}).get('metadata') or {}
+
+    def reading(metric):
+        """Value with unit; detection and filter in the tooltip."""
+        if metric not in metrics_now:
+            return "—", "Not received"
+        settings = metadata_now.get(metric, {})
+        return (f"{metrics_now[metric]:.4g} {settings.get('unit') or ''}".strip(),
+                " · ".join(str(settings.get(key)) for key in ('detection', 'filter') if settings.get(key)))
+
+    velocity, velocity_detail = reading("Velocity")
+    tiles = []
+    for metric, label in (("Acceleration", "Acceleration"), ("Displacement", "Displacement"), ("Crest Factor", "Crest factor"),
+                          ("True Peak", "True peak"), ("Std Deviation", "Std deviation")):
+        if metric not in metrics_now:
+            continue  # only show readings this VDS actually sends
+        value, detail = reading(metric)
+        tiles.append(html.Div([html.Span(label, className="metric-label"), html.Span(value, className="metric-value", title=detail)],
+                              className="metric-tile"))
+    severity_text = {"alert": "Alert", "warning": "Warning"}.get(severity)
+    tone = (severity if severity_text else quality).replace(" ", "-")
+    status = html.Span(severity_text or quality.capitalize(), className=f"status-pill status-{tone}")
     card_body_content = [
-        html.P([html.Strong("Sensor type: "), html.Span((data or {}).get("sensor_type") or "Not reported")]),
-        html.P([html.Strong("Sensitivity: "), html.Span(sens)]),
-        html.P([html.Strong("Acceleration: "), html.Span(accel)]),
-        html.P([html.Strong("Velocity: "), html.Span(vel)]),
-        html.P([html.Strong("Displacement: "), html.Span(disp)]),
-        html.P([html.Strong("Crest Factor: "), html.Span(crest)]),
-        html.P([html.Strong("True Peak: "), html.Span(peak)]),
-        html.P([html.Strong("Std Deviation: "), html.Span(stddev)]),
-        html.P([html.Strong("Quality: "), html.Span(freshness(data or {})["status"])]),
-        html.P([html.Strong("Timestamp: "), html.Span(ts)], className="mt-3 small text-muted"),
+        html.Div([
+            html.Div([html.Span("Velocity", className="metric-label"),
+                      html.Div([html.Span(velocity.split(" ")[0], className="hero-value"),
+                                html.Span(" ".join(velocity.split(" ")[1:]), className="hero-unit")], title=velocity_detail)]),
+            html.Div([status, ai_badges.get((gateway_id, ch))], className="text-end")
+        ], className="hero-row"),
+        html.Div(tiles, className="metric-grid") if metrics_now else html.Div("No measurements received yet.", className="text-muted small my-3"),
+        html.Div([html.Span([html.Strong("Sensor type: "), (data or {}).get("sensor_type") or "Not reported"]),
+                  html.Span([html.Strong("Sensitivity: "), sens])], className="sensor-meta"),
+        html.Div([html.I(className="far fa-clock me-1"), ts], className="sensor-time"),
         dbc.ButtonGroup([
-            html.Button("Waveform", id=wf_btn_id, className="btn btn-outline-primary btn-sm"),
-            html.Button("Spectrum", id=spec_btn_id, className="btn btn-outline-primary btn-sm")
+            html.Button([html.I(className="fas fa-wave-square me-1"), "Waveform"], id=wf_btn_id, className="btn btn-outline-primary btn-sm"),
+            html.Button([html.I(className="fas fa-chart-bar me-1"), "Spectrum"], id=spec_btn_id, className="btn btn-outline-primary btn-sm")
         ], className="w-100 mt-2")
     ]
 
@@ -1169,7 +1194,7 @@ def create_rpm_box(gateway_id, rpm_val, any_channel_active, device_config):
     val = f"{rpm_val:.1f}" if isinstance(rpm_val, (int, float)) else "---" 
     trend_check_id = {"type": "rpm-trend-check", "gateway": gateway_id}
     
-    return dbc.Col(dbc.Card([dbc.CardHeader([html.Span(style=led_style, className=led_class),html.Strong("RPM", style={"verticalAlign": "middle"}),dbc.Checkbox(id=trend_check_id, label="Trend", value=is_checked, className="float-end")], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6"}),dbc.CardBody(html.H4(val, className="text-center my-4 py-4"), style={"padding": "1rem"})], style=style), className="device-card-column")
+    return dbc.Col(dbc.Card([dbc.CardHeader([html.Span(style=led_style, className=led_class),html.Strong("RPM", style={"verticalAlign": "middle"}),dbc.Checkbox(id=trend_check_id, label="Trend", value=is_checked, className="float-end")], style={"backgroundColor": "#f8f9fa","borderBottom": "1px solid #dee2e6"}),dbc.CardBody([html.Div(val, className="hero-value text-center"), html.Div("RPM from the VDS speed sensor", className="text-muted small text-center")], style={"padding": "1.25rem 1rem"})], style={**style, "height": "auto"}), className="device-card-column rpm-column")
 
 header = dbc.Navbar(
     dbc.Container(
@@ -1183,20 +1208,23 @@ header = dbc.Navbar(
 sidebar = html.Div([
     html.H4("Menu", className="text-white p-3"),
     dbc.Nav([
+        html.Div("Monitor", className="nav-section"),
         dbc.NavLink([html.I(className="fas fa-chart-line me-2"), "Dashboard"], href="/", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-heartbeat me-2"), "Health Agents"], href="/health", active="exact", className="text-white"),
-        dbc.NavLink('Asset registry', href='/assets', active='exact', className='text-white'),
-        dbc.NavLink('Alarm management', href='/alarms', active='exact', className='text-white'),
-        dbc.NavLink('Vibration diagnostics', href='/diagnostics', active='exact', className='text-white'),
-        dbc.NavLink('Reports and backups', href='/reports', active='exact', className='text-white'),
-        dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"), 
-        dbc.NavLink([html.I(className="fas fa-bug me-2"), "Debug Log"], href="/debug", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-wave-square me-2"), "Vibration diagnostics"], href='/diagnostics', active='exact', className='text-white'),
+        dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-bell me-2"), "Alarm management"], href='/alarms', active='exact', className='text-white'),
+        html.Div("Setup", className="nav-section"),
+        dbc.NavLink([html.I(className="fas fa-tags me-2"), "Asset registry"], href='/assets', active='exact', className='text-white'),
         dbc.NavLink([html.I(className="fas fa-broadcast-tower me-2"), "MQTT Settings"], href="/mqtt", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-network-wired me-2"), "Ethernet Settings"], href="/ethernet", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-rss me-2"), "Modbus TCP"], href="/modbus", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-project-diagram me-2"), "OPC UA Server"], href="/opcua", active="exact", className="text-white"), 
+        dbc.NavLink([html.I(className="fas fa-project-diagram me-2"), "OPC UA Server"], href="/opcua", active="exact", className="text-white"),
+        html.Div("System", className="nav-section"),
+        dbc.NavLink([html.I(className="fas fa-file-alt me-2"), "Reports and backups"], href='/reports', active='exact', className='text-white'),
+        dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-bug me-2"), "Debug Log"], href="/debug", active="exact", className="text-white"),
     ], vertical=True, pills=True)
 ], id="sidebar", style={"position": "fixed", "top": 0, "left": 0, "bottom": 0, "width": "18rem", "padding": "1rem", "paddingTop": "4rem", "backgroundColor": "#343a40", "transition": "all 0.3s"})
 
@@ -1431,7 +1459,14 @@ history_layout = html.Div([
     ]))
 ])
 
-system_info_panel = dbc.Card(dbc.CardBody(dbc.ListGroup([dbc.ListGroupItem([html.I(className="fas fa-barcode me-2"), html.Strong("Serial Number: "), html.Span(id="pi-serial")]),dbc.ListGroupItem([html.I(className="fas fa-clock me-2"), html.Strong("Date/Time: "), html.Span(id="pi-datetime")]),dbc.ListGroupItem([html.I(className="fas fa-hourglass-start me-2"), html.Strong("Uptime: "), html.Span(id="pi-uptime")]),dbc.ListGroupItem([html.I(className="fas fa-memory me-2"), html.Strong("Total Memory / Free: "), html.Span(id="pi-memory")]),dbc.ListGroupItem([html.I(className="fas fa-temperature-high me-2"), html.Strong("System Temperature: "), html.Span(id="pi-temp")]),dbc.ListGroupItem([html.I(className="fas fa-hdd me-2"), html.Strong("Storage Total / Free: "), html.Span(id="pi-disk")]),dbc.ListGroupItem([html.I(className="fas fa-microchip me-2"), html.Strong("CPU Load: "), html.Span(id="pi-cpuload")]),dbc.ListGroupItem([html.I(className="fas fa-network-wired me-2"), html.Strong("Connection IP: "), html.Span(id="pi-ip")])], flush=True, className="small"), style={"padding": "0.5rem"}), className="mb-4", style={"boxShadow": "0 4px 12px rgba(0,0,0,0.1)","border": "none","borderRadius": "8px"})
+system_info_panel = html.Div([
+    html.Div([html.I(className=f"fas {icon} tile-icon"), html.Div([html.Div(label, className="tile-label"), html.Div(html.Span(id=span_id), className="tile-value")])],
+             className="info-tile")
+    for icon, label, span_id in (("fa-barcode", "Serial number", "pi-serial"), ("fa-clock", "Date / time", "pi-datetime"),
+                                 ("fa-hourglass-half", "Uptime", "pi-uptime"), ("fa-memory", "Memory total / free", "pi-memory"),
+                                 ("fa-temperature-high", "Temperature", "pi-temp"), ("fa-hdd", "Storage total / free", "pi-disk"),
+                                 ("fa-microchip", "CPU load", "pi-cpuload"), ("fa-network-wired", "IP address", "pi-ip"))
+], className="info-strip mb-4")
 
 def create_datetime_settings_card():
     timezone_options, current_tz, ntp_on = get_system_time_settings()
@@ -1681,6 +1716,22 @@ def delete_job_data(n_clicks):
         log_to_web(f"❌ Error deleting job: {e}")
         return no_update
 
+def overview_strip(storage, ai_badges):
+    """Plant overview: VDS units, live sensors, alarms and AI findings at a glance."""
+    channels = [c for device in storage.values() for c in device.get("channels", {}).values()]
+    live = sum(1 for c in channels if freshness(c)['status'] == 'fresh')
+    alarms = sum(1 for c in channels if c.get('alarm', {}).get('severity') in ('warning', 'alert'))
+    findings = sum(1 for badge in ai_badges.values() if badge is not None and 'ai-finding' in (badge.className or ''))
+    def tile(icon, label, value, tone=""):
+        return html.Div([html.I(className=f"fas {icon} tile-icon"), html.Div([html.Div(label, className="tile-label"), html.Div(value, className="tile-value")])],
+                        className=f"overview-tile {tone}")
+    tiles = [tile("fa-satellite-dish", "VDS units", str(len(storage))),
+             tile("fa-signal", "Sensors live", f"{live} / {len(channels)}", "tone-good" if channels and live == len(channels) else "tone-warn" if live else "tone-bad"),
+             tile("fa-bell", "Active alarms", str(alarms), "tone-bad" if alarms else "tone-good")]
+    if historian.edge_ai_enabled():
+        tiles.append(tile("fa-brain", "AI findings", str(findings), "tone-warn" if findings else "tone-good"))
+    return html.Div(tiles, className="overview-strip")
+
 @app.callback(Output("device-dashboard-container", "children"), [Input("live-update-trigger", "data"), Input("device-config-store", "data"), Input({"type": "metric-select-dd", "gateway": ALL, "channel": ALL}, "value"), State('store-accordion-state', 'data')])
 def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values, active_accordion_item):
     with data_lock: storage_copy = copy.deepcopy(data_storage)
@@ -1698,6 +1749,7 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
 
     accordion_items = []
     sorted_gateway_ids = sorted(storage_copy.keys())
+    ai_badges = ai_views.channel_badges(DATA_FOLDER) if historian.edge_ai_enabled() else {}
     active_list = active_accordion_item if isinstance(active_accordion_item, list) else [active_accordion_item] if isinstance(active_accordion_item, str) else []
     
     with job_lock: active_job_map = copy.deepcopy(active_jobs)
@@ -1723,18 +1775,21 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
         item_id = f"item-{gateway_id}"
         is_open = item_id in active_list
         
+        online = sum(1 for c in device_data.get("channels", {}).values() if freshness(c)['status'] == 'fresh')
         core_header = dbc.Row([
-            dbc.Col(dbc.Row([dbc.Col(html.Span(f"Serial: {gateway_id}", style={"backgroundColor": "white", "color": "black", "border": "2px solid #007bff", "padding": "5px 10px", "borderRadius": "15px", "fontWeight": "bold", "marginRight": "15px", "boxShadow": "none", "fontSize": "0.9em"}), width="auto"), dbc.Col(html.Span([html.Span(f"Last Update: {last_seen_ts}", className="text-muted small"), rec_indicator]), width="auto")], align="center", className="g-2"), width=True),
+            dbc.Col(dbc.Row([dbc.Col(html.Span([html.I(className="fas fa-satellite-dish me-2"), f"{gateway_id}"], className="gateway-name"), width="auto"),
+                             dbc.Col(html.Span(f"{online}/4 channels live", className=f"status-pill status-{'fresh' if online else 'stale'}"), width="auto"),
+                             dbc.Col(html.Span([html.Span(f"Last update {last_seen_ts}", className="text-muted small"), rec_indicator]), width="auto")], align="center", className="g-2"), width=True),
             dbc.Col(dbc.Row([dbc.Col(dbc.Button(html.I(className="fas fa-trash-alt"), id={'type': 'delete-btn', 'gateway': gateway_id}, color="danger", outline=True, size="sm"), width="auto")], align="center", className="g-2"), width="auto", className="ms-auto d-flex align-items-center")
         ], justify="start", align="center", className="w-100")
         
-        styled_header = html.Div(core_header, className="accordion-header-fresh" if is_fresh else "", style={'border': '1px solid #B0E0FF', 'borderRadius': '8px', 'padding': '10px', 'backgroundColor': 'white', 'margin': '5px 0', 'boxShadow': '0 0 8px rgba(176, 224, 255, 0.6)', 'width': '100%', 'display': 'flex', 'alignItems': 'center'})
+        styled_header = html.Div(core_header, className="gateway-header" + (" accordion-header-fresh" if is_fresh else ""))
         
         device_boxes_row = []; any_active = False
         for ch in ['1', '2', '3', '4']:
             ch_data = device_data.get("channels", {}).get(ch)
             if ch_data and freshness(ch_data)['status'] == 'fresh': any_active = True
-            device_boxes_row.append(create_channel_box(ch, gateway_id, ch_data, device_config))
+            device_boxes_row.append(create_channel_box(ch, gateway_id, ch_data, device_config, ai_badges))
         device_boxes_row.append(create_rpm_box(gateway_id, device_data.get("rpm", 0), any_active, device_config))
         
         graph_content = []
@@ -1769,7 +1824,7 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
         
         accordion_items.append(dbc.AccordionItem(children=html.Div([dbc.Row(device_boxes_row, className="device-card-grid my-2"), html.Div(graph_content)]), title=styled_header, item_id=f"item-{gateway_id}"))
     
-    return dbc.Accordion(accordion_items, id="device-accordion", active_item=active_accordion_item, always_open=True, flush=True)
+    return [overview_strip(storage_copy, ai_badges), dbc.Accordion(accordion_items, id="device-accordion", active_item=active_accordion_item, always_open=True, flush=True)]
 
 @app.callback(Output('store-accordion-state', 'data'),Input('device-accordion', 'active_item'),prevent_initial_call=True)
 def save_accordion_state(active_item): return active_item

@@ -3,6 +3,7 @@ import io
 import json
 import os
 import pickle
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -165,6 +166,32 @@ class DashboardTests(unittest.TestCase):
             self.assertIn("ai-gw-enabled", self.callback_request("display_page", assets).get_data(as_text=True))
             self.assertNotIn("ai-gw-enabled", self.callback_request("display_page", old_page).get_data(as_text=True))
 
+    def test_dashboard_renders_overview_cards_and_ai_badges(self):
+        import time as clock
+
+        fixture = os.path.join(os.path.dirname(__file__), "fixtures", "vds130_messages.json")
+        with open(fixture, encoding="utf-8") as stream:
+            for message in json.load(stream):
+                message["timestamp"] = int(clock.time() * 1000)
+                app.on_message(None, None, SimpleNamespace(payload=json.dumps(message).encode()))
+        os.makedirs(os.path.join(self.directory.name, "ai"), exist_ok=True)
+        with open(os.path.join(self.directory.name, "ai", "findings.json"), "w", encoding="utf-8") as stream:
+            json.dump({"generated_at": clock.time(), "findings": [{"gateway_id": "VDS-DEMO", "channel": "1",
+                       "title": "Pump: likely Bearing outer race defect", "message": "x", "severity": "warning"}]},
+                      stream)
+        inputs = [{"id": "live-update-trigger", "property": "data", "value": 1},
+                  {"id": "device-config-store", "property": "data", "value": {}}, []]
+        state = [{"id": "store-accordion-state", "property": "data", "value": ["item-VDS-DEMO"]}]
+        with patch.object(app, "DATA_FOLDER", self.directory.name), \
+                patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "1"}):
+            response = self.callback_request("update_dynamic_dashboard", inputs, state,
+                                             changed=["live-update-trigger.data"])
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True)[:300])
+        body = response.get_data(as_text=True)
+        for text in ("overview-strip", "Sensors live", "AI findings", "hero-value", "metric-grid", "Sensor type: ",
+                     "Bearing outer race defect", "ai-finding"):
+            self.assertIn(text, body)
+
     def test_spectrum_popup_draws_fault_lines_for_the_bearing(self):
         import numpy as np
 
@@ -184,9 +211,11 @@ class DashboardTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             body = json.loads(response.get_data(as_text=True))["response"]
         figure = body["modal-graph"]["figure"]
-        texts = [a["text"] for a in figure["layout"]["annotations"]]
+        texts = [re.sub("<[^>]+>", "", a["text"]) for a in figure["layout"]["annotations"]]
         for name in ("1x", "2x", "BPFO", "BPFI", "FTF"):
-            self.assertIn(name, texts)
+            self.assertIn(name, texts)  # coloured label tags
+        self.assertTrue(any("BPFO 88.4 Hz" in text for text in texts), "colour key lists each line with Hz")
+        self.assertTrue(any(shape["type"] == "rect" for shape in figure["layout"]["shapes"]), "shaded bands")
         lines = next(trace for trace in figure["data"] if trace.get("name") == "Fault lines")
         self.assertIn("2xBPFO", lines["text"])  # harmonics are drawn and named on hover
         self.assertEqual(body["modal-graph"]["figure"]["layout"]["yaxis"]["type"], "log")
@@ -195,8 +224,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("BPFO", json.dumps(body["modal-peak-table-container"]))
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "", "VDS_EDGE_AI": "0"}):
             plain = json.loads(self.callback_request("render_modal_graph", inputs).get_data(as_text=True))
-        self.assertEqual([a["text"] for a in plain["response"]["modal-graph"]["figure"]["layout"]["annotations"]],
-                         ["1x"])
+        plain_texts = " ".join(a["text"] for a in plain["response"]["modal-graph"]["figure"]["layout"]["annotations"])
+        self.assertIn("1x", plain_texts)
+        self.assertNotIn("BPFO", plain_texts)
 
     def test_cross_origin_action_rejected(self):
         with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "admin-secret"}):

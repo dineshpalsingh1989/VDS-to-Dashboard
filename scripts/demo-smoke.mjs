@@ -26,7 +26,7 @@ try {
   await until('document.body.dataset.demoReady === "/"');
   assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
   assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
-  assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std Deviation:'));
+  assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std deviation'));
   assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
   if(process.env.DEMO_SCREENSHOT) {
     const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});

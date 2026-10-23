@@ -7,6 +7,7 @@ from scipy.signal import find_peaks
 from .fault_frequencies import marker_lines, nearest_fault
 
 MAX_PEAKS = 10
+MAIN_LINES = ("1x", "2x", "3x", "BPFO", "BPFI", "BSF", "FTF", "GMF", "BPF", "2x Line")
 
 
 def strongest_peaks(x, y, limit=MAX_PEAKS):
@@ -29,16 +30,24 @@ def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, 
     lines = marker_lines(info or {}, rpm, set(families), harmonics, float(x.max()) if x.size else 0) if info else []
     if not info and rpm:  # dashboards without the IRIV AI: running speed only, as before
         lines = [("speed", "1x", rpm / 60, "#6c757d")]
-    labelled = 0
+    labelled, key = 0, []
     for _key, name, hz, colour in lines:
-        main = name in ("1x", "2x", "3x", "BPFO", "BPFI", "BSF", "FTF", "GMF", "BPF", "2x Line")
+        main = name in MAIN_LINES
         figure.add_vline(x=hz, line=dict(color=colour, width=1.2 if main else 0.7, dash="dot"),
                          opacity=0.9 if main else 0.45)
-        if main:  # label the main lines only, staggered so neighbours do not overlap
-            figure.add_annotation(x=hz, y=1.0 - 0.07 * (labelled % 3), yref="paper", text=name, showarrow=False,
-                                  xanchor="left", yanchor="top", font=dict(size=10, color=colour),
-                                  bgcolor="rgba(255,255,255,0.8)")
+        if main:
+            # Shaded band (±2 %) where this fault frequency can sit as speed varies a little
+            figure.add_vrect(x0=hz * 0.98, x1=hz * 1.02, fillcolor=colour, opacity=0.08, line_width=0, layer="below")
+            # Coloured label tag, staggered so neighbouring tags do not overlap
+            figure.add_annotation(x=hz, y=1.0 - 0.075 * (labelled % 3), yref="paper", text=f"<b>{name}</b>",
+                                  showarrow=False, xanchor="left", yanchor="top", font=dict(size=10, color="white"),
+                                  bgcolor=colour, bordercolor=colour, borderpad=2, opacity=0.95)
             labelled += 1
+            key.append(f'<span style="color:{colour}">■</span> {name} {hz:.1f} Hz')
+    if key:  # colour key in the top-right corner
+        figure.add_annotation(x=0.995, y=0.985, xref="paper", yref="paper", xanchor="right", yanchor="top",
+                              align="left", showarrow=False, text="<br>".join(key), font=dict(size=10, color="#203047"),
+                              bgcolor="rgba(255,255,255,0.92)", bordercolor="#cbd5e1", borderwidth=1, borderpad=6)
     if lines:  # every line, harmonics included, names itself on hover
         figure.add_trace(go.Scatter(
             x=[hz for _k, _n, hz, _c in lines], y=[float(y.max()) if y.size else 0] * len(lines), mode="markers",
