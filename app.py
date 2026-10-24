@@ -42,6 +42,8 @@ from vds_dashboard import historian
 from vds_dashboard import workspace_views
 from vds_dashboard import ai_views
 from vds_dashboard import ai_channel
+from vds_dashboard import devices_view
+from vds_dashboard import storage_view
 from vds_dashboard import history_view
 from contextlib import closing
 
@@ -705,9 +707,16 @@ def on_message(client, userdata, msg):
             raise ValueError('MQTT payload exceeds 8 MiB')
         packet = normalize_packet(json.loads(msg.payload.decode('utf-8')))
         gid, ch = packet['gateway_id'], packet['channel']
+        conn = get_db_connection()
+        status = historian.device_status(conn, gid)
+        if status != 'allowed' and historian.approval_required():
+            # A new VDS waits on the VDS130 page; nothing it sends is stored or shown until it is allowed.
+            if status != 'blocked':
+                historian.note_pending_device(conn, gid, packet)
+                conn.commit()
+            return
         with job_lock:
             recording = gid in active_jobs and active_jobs[gid]['end_time'] > datetime.now()
-        conn = get_db_connection()
         state = historian.store_packet(conn, packet, recording)
         conn.commit()
         # Publish to readers only after the durable transaction succeeds.
@@ -1024,7 +1033,7 @@ def protect_dashboard():
                     'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
                     'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
                     'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
-                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph', 'sidebar_user', 'nav_settings'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | ai_channel.READ_CALLBACKS | history_view.READ_CALLBACKS
+                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph', 'sidebar_user', 'nav_settings'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | ai_channel.READ_CALLBACKS | devices_view.READ_CALLBACKS | history_view.READ_CALLBACKS
         status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
         if viewer and not admin and name not in readonly and not status_poll:
             return Response('Administrator access required for this action', 403)
@@ -1216,7 +1225,7 @@ sidebar = html.Div([
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-bell me-2"), "Alarm management"], href='/alarms', active='exact', className='text-white'),
         html.Div("Setup", className="nav-section"),
-        dbc.NavLink([html.I(className="fas fa-tags me-2"), "Asset registry"], href='/assets', active='exact', className='text-white'),
+        dbc.NavLink([html.I(className="fas fa-microchip me-2"), "VDS130"], href='/assets', active='exact', className='text-white'),
         dbc.NavLink([html.I(className="fas fa-file-alt me-2"), "Reports and backups"], href='/reports', active='exact', className='text-white'),
         dbc.NavLink([html.I(className="fas fa-cog me-2"), "Settings"], id="nav-settings", href="/device", active="exact", className="text-white"),
     ], vertical=True, pills=True),
@@ -1227,6 +1236,7 @@ sidebar = html.Div([
 SETTINGS_PAGES = (("/device", "fa-server", "Device"), ("/mqtt", "fa-broadcast-tower", "MQTT"),
                   ("/ethernet", "fa-network-wired", "Ethernet"), ("/modbus", "fa-rss", "Modbus TCP"),
                   ("/opcua", "fa-project-diagram", "OPC UA"), ("/data-storage", "fa-database", "Data storage"),
+                  ("/database", "fa-hdd", "Database & files"),
                   ("/debug", "fa-bug", "Debug log"))
 
 
@@ -1563,9 +1573,22 @@ def nav_settings(pathname):
     return any(pathname == path for path, _icon, _label in SETTINGS_PAGES)
 
 
-@app.callback(Output("live-update-trigger", "data"), Input("live-refresh", "n_intervals"))
-def refresh_live_data(message):
-    return {'type': 'data_update', 'sequence': message}
+@app.callback(Output("live-update-trigger", "data"), Input("live-refresh", "n_intervals"),
+              State("live-update-trigger", "data"))
+def refresh_live_data(message, previous):
+    """Redraw Home only when a VDS sent something new, the AI wrote new findings, or every 30 s
+    (so freshness turns to stale on time). Redrawing every card every 2 s kept the server busy."""
+    with data_lock:
+        devices = tuple(sorted((gid, device.get('timestamp_ms'), len(device.get('channels', {})))
+                               for gid, device in data_storage.items()))
+    try:
+        findings = os.path.getmtime(os.path.join(DATA_FOLDER, 'ai', 'findings.json'))
+    except OSError:
+        findings = None
+    signature = repr((devices, findings, int(time.time() // 30)))
+    if previous and previous.get('signature') == signature:
+        return no_update
+    return {'type': 'data_update', 'sequence': message, 'signature': signature}
 
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
@@ -1577,6 +1600,7 @@ def display_page(pathname):
         return html.Div([html.H3('Health Agents'), html.P('Live advisory checks for sensor freshness, connectivity, and storage.', className='text-muted'), html.Div(id='health-findings'),
                          *([ai_views.health_section()] if historian.edge_ai_enabled() else [])])
     settings = {"/device": lambda: device_info_layout, "/data-storage": lambda: data_storage_layout,
+                "/database": lambda: storage_view.page(DB_FILE, DATA_FOLDER, historian.edge_ai_enabled()),
                 "/debug": lambda: debug_layout, "/mqtt": create_mqtt_layout, "/ethernet": lambda: ethernet_layout,
                 "/modbus": create_modbus_layout, "/opcua": create_opcua_layout}
     if pathname in settings:
@@ -1766,8 +1790,10 @@ def overview_strip(storage, ai_badges):
 @app.callback(Output("device-dashboard-container", "children"), [Input("live-update-trigger", "data"), Input("device-config-store", "data"), Input({"type": "metric-select-dd", "gateway": ALL, "channel": ALL}, "value"), State('store-accordion-state', 'data')])
 def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values, active_accordion_item):
     with data_lock: storage_copy = copy.deepcopy(data_storage)
+    with closing(get_db_connection()) as banner_conn:
+        banner = devices_view.pending_banner(banner_conn)  # a new VDS is waiting for approval
     if not storage_copy:
-        return dbc.Alert([html.H5('Waiting for sensor data'), html.P('Connect your MQTT broker to discover devices and display live measurements.'), dbc.Button('Configure MQTT', href='/mqtt', color='primary')], color='light', className='border p-4')
+        return banner or dbc.Alert([html.H5('Waiting for sensor data'), html.P('Connect your MQTT broker to discover devices and display live measurements.'), dbc.Button('Configure MQTT', href='/mqtt', color='primary')], color='light', className='border p-4')
     if not device_config_store: device_config_store = {}
     
     metric_map = {}
@@ -1858,7 +1884,7 @@ def update_dynamic_dashboard(trigger_data, device_config_store, metric_dd_values
         
         accordion_items.append(dbc.AccordionItem(children=html.Div([dbc.Row(device_boxes_row, className="device-card-grid my-2"), html.Div(graph_content)]), title=styled_header, item_id=f"item-{gateway_id}"))
     
-    return [overview_strip(storage_copy, ai_badges), dbc.Accordion(accordion_items, id="device-accordion", active_item=active_accordion_item, always_open=True, flush=True)]
+    return [banner, overview_strip(storage_copy, ai_badges), dbc.Accordion(accordion_items, id="device-accordion", active_item=active_accordion_item, always_open=True, flush=True)]
 
 @app.callback(Output('store-accordion-state', 'data'),Input('device-accordion', 'active_item'),prevent_initial_call=True)
 def save_accordion_state(active_item): return active_item
@@ -2296,6 +2322,22 @@ def get_live_snapshot():
         return copy.deepcopy(data_storage)
 
 
+def get_device_overview():
+    """Each VDS with its channels' timing fields only (no spectra), for the VDS130 page."""
+    with data_lock:
+        return {gid: {'last_seen': device.get('last_seen'),
+                      'channels': {ch: {k: v for k, v in channel.items() if isinstance(v, (str, int, float, type(None)))}
+                                   for ch, channel in device.get('channels', {}).items()}}
+                for gid, device in data_storage.items()}
+
+
+def get_live_channel(gid, ch):
+    """A copy of one channel's live data (copying every device took longer than drawing the plot)."""
+    with data_lock:
+        channel = data_storage.get(gid, {}).get('channels', {}).get(ch)
+        return copy.deepcopy(channel) if channel else None
+
+
 def apply_asset_settings(gid, ch, settings):
     with data_lock:
         channel = data_storage.get(gid, {}).get('channels', {}).get(ch)
@@ -2310,7 +2352,8 @@ def apply_asset_settings(gid, ch, settings):
 workspace_views.register(app, get_db_connection, get_live_snapshot, apply_asset_settings)
 ai_views.register(app, get_db_connection, DATA_FOLDER)
 ai_channel.register(app, get_db_connection, lambda: DATA_FOLDER, get_live_snapshot)
-history_view.register(app, get_db_connection, DATA_FOLDER, get_live_snapshot)
+devices_view.register(app, get_db_connection, get_device_overview)
+history_view.register(app, get_db_connection, DATA_FOLDER, get_live_channel)
 
 
 def maintenance_thread_func():

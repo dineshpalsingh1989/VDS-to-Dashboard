@@ -40,6 +40,7 @@ gid = "VDS-DEMO-01"
 epoch = time.time()
 meta = {"unit": "mm/s", "filter": "10Hz-1kHz", "detection": "RMS"}
 with closing(app.get_db_connection()) as conn, conn:
+    historian.set_device_status(conn, gid, "allowed")  # approved on the VDS130 page
     for ch in ("1", "2", "3", "4"):
         historian.save_asset(conn, gid, ch, dict(
             site="Example plant / Utilities", machine="Cooling water pump P-103",

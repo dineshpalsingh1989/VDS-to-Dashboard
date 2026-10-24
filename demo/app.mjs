@@ -85,7 +85,10 @@ function readonly() {
     else control.disabled = true;
     control.title = 'Viewer preview — changes and service controls are disabled';
   });
-  main.querySelectorAll('a.settings-tab[href^="/"]').forEach(anchor => { anchor.href = '#' + anchor.getAttribute('href'); });
+  // Settings tabs that the demo exported open as demo pages; the rest stay disabled below
+  main.querySelectorAll('a.settings-tab[href^="/"]').forEach(anchor => {
+    if (Object.hasOwn(pages, anchor.getAttribute('href'))) anchor.href = '#' + anchor.getAttribute('href');
+  });
   main.querySelectorAll('a[href^="/"]').forEach(anchor => {
     anchor.removeAttribute('href'); anchor.setAttribute('aria-disabled', 'true');
     anchor.classList.add('disabled'); anchor.title = 'Unavailable in the public viewer demo';

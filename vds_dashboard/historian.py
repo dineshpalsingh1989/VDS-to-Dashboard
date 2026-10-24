@@ -58,7 +58,14 @@ def setup_schema(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT, gateway_id TEXT NOT NULL, channel TEXT NOT NULL,
             kind TEXT NOT NULL, since_ms INTEGER, fault_id TEXT, verdict TEXT NOT NULL,
             user TEXT, created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS devices (
+            gateway_id TEXT PRIMARY KEY, status TEXT NOT NULL, first_seen REAL NOT NULL, last_seen REAL NOT NULL,
+            info TEXT NOT NULL DEFAULT '{}');
     """)
+    # VDS units that already sent data before approval existed keep running: adopt them as allowed.
+    conn.execute("INSERT OR IGNORE INTO devices (gateway_id, status, first_seen, last_seen, info) "
+                 "SELECT DISTINCT gateway_id, 'allowed', strftime('%s','now'), strftime('%s','now'), '{}' "
+                 "FROM channel_state")
     for table in ("trends", "trends_latest", "raw_waveforms", "raw_spectrum"):
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
         if columns and "context" not in columns:
@@ -157,6 +164,53 @@ def ai_setup_missing(settings, rpm=None):
     elif not (rpm and float(rpm) > 0) and not fixed:
         missing.append("running speed: the VDS reports none, so enter a fixed RPM")
     return missing
+
+
+DEVICE_STATUSES = ("pending", "allowed", "blocked")
+
+
+def approval_required():
+    """A new VDS waits on the VDS130 page until a user allows it (VDS_DEVICE_APPROVAL=0 turns this off)."""
+    return os.environ.get("VDS_DEVICE_APPROVAL", "1").strip().lower() not in ("0", "false", "no")
+
+
+def device_status(conn, gid):
+    row = conn.execute("SELECT status FROM devices WHERE gateway_id=?", (gid,)).fetchone()
+    return row[0] if row else None
+
+
+def note_pending_device(conn, gid, packet, now=None):
+    """Remember a VDS that is not allowed yet, with what it sent, so the user can decide."""
+    now = time.time() if now is None else now
+    row = conn.execute("SELECT info FROM devices WHERE gateway_id=?", (gid,)).fetchone()
+    info = json.loads(row[0]) if row else {}
+    channels = set(info.get("channels", [])) | {str(packet.get("channel"))}
+    info.update(channels=sorted(channels), sensor_type=packet.get("sensor_type") or info.get("sensor_type"),
+                rpm=packet.get("rpm") if packet.get("rpm") is not None else info.get("rpm"),
+                messages=int(info.get("messages", 0)) + 1)
+    if row:
+        conn.execute("UPDATE devices SET last_seen=?, info=? WHERE gateway_id=?", (now, json.dumps(info), gid))
+    else:
+        conn.execute("INSERT INTO devices (gateway_id, status, first_seen, last_seen, info) VALUES (?,?,?,?,?)",
+                     (gid, "pending", now, now, json.dumps(info)))
+
+
+def set_device_status(conn, gid, status, now=None):
+    """Allow or block a VDS. Allowing an unknown serial number pre-approves it."""
+    gid = str(gid or "").strip()
+    if not gid or len(gid) > 64:
+        raise ValueError("Unknown VDS")
+    if status not in ("allowed", "blocked"):
+        raise ValueError("A VDS can be allowed or blocked")
+    now = time.time() if now is None else now
+    conn.execute("INSERT INTO devices (gateway_id, status, first_seen, last_seen, info) VALUES (?,?,?,?, '{}') "
+                 "ON CONFLICT(gateway_id) DO UPDATE SET status=excluded.status", (gid, status, now, now))
+
+
+def devices(conn):
+    return [{"gateway_id": g, "status": s, "first_seen": f, "last_seen": seen, "info": json.loads(i or "{}")}
+            for g, s, f, seen, i in conn.execute(
+                "SELECT gateway_id, status, first_seen, last_seen, info FROM devices ORDER BY status, gateway_id")]
 
 
 def edge_ai_enabled():

@@ -10,6 +10,24 @@ MAX_PEAKS = 10
 MAIN_LINES = ("1x", "2x", "3x", "BPFO", "BPFI", "BSF", "FTF", "GMF", "BPF", "2x Line")
 
 
+def vline(x, color, width=1.0, dash="dot", opacity=1.0):
+    """A full-height vertical line as a layout shape. Plotly's add_vline re-checks every shape on each
+    call, so 40 lines took over a second; collecting dicts and setting them once is instant."""
+    return dict(type="line", xref="x", yref="paper", x0=x, x1=x, y0=0, y1=1, opacity=opacity,
+                line=dict(color=color, width=width, dash=dash))
+
+
+def vband(x0, x1, color, opacity):
+    return dict(type="rect", xref="x", yref="paper", x0=x0, x1=x1, y0=0, y1=1, fillcolor=color, opacity=opacity,
+                line=dict(width=0), layer="below")
+
+
+def add_layout_items(figure, shapes=(), annotations=()):
+    """Append shapes and annotations in one layout update."""
+    figure.update_layout(shapes=list(figure.layout.shapes or ()) + list(shapes),
+                         annotations=list(figure.layout.annotations or ()) + list(annotations))
+
+
 def strongest_peaks(x, y, limit=MAX_PEAKS):
     """The clearest peaks, judged by prominence relative to the largest one."""
     if y.size < 3 or float(np.max(y)) <= 0:
@@ -41,15 +59,14 @@ def add_harmonic_markers(figure, x, y, rpm, top, count=20):
     hz = [k * shaft for k in range(1, count + 1) if k * shaft <= top]
     if not hz or x.size == 0:
         return
-    for k, f in enumerate(hz, start=1):
-        figure.add_vline(x=f, line=dict(color="#2647d6", width=1, dash="dash"), opacity=0.75)
     values = [float(y[int(np.argmin(np.abs(x - f)))]) for f in hz]
     figure.add_trace(go.Scatter(x=hz, y=values, mode="markers", name="Harmonics",
                                 marker=dict(symbol="diamond", size=9, color="#e3262f", line=dict(color="white", width=1)),
                                 text=[f"{k}x" for k in range(1, len(hz) + 1)],
                                 hovertemplate="%{text}: %{x:.2f} Hz<extra></extra>"))
-    figure.add_annotation(x=hz[0], y=1, yref="paper", text=f"<b>{rpm:.0f} CPM</b><br>1x", showarrow=False,
-                          xanchor="left", yanchor="top", align="left", font=dict(size=11, color="#203047"))
+    add_layout_items(figure, [vline(f, "#2647d6", 1, "dash", 0.75) for f in hz],
+                     [dict(x=hz[0], y=1, yref="paper", text=f"<b>{rpm:.0f} CPM</b><br>1x", showarrow=False,
+                           xanchor="left", yanchor="top", align="left", font=dict(size=11, color="#203047"))])
 
 
 def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, log=False, key_box=True):
@@ -63,24 +80,24 @@ def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, 
     lines = marker_lines(info or {}, rpm, set(families), harmonics, float(x.max()) if x.size else 0) if info else []
     if not info and rpm:  # dashboards without the IRIV AI: running speed only, as before
         lines = [("speed", "1x", rpm / 60, "#6c757d")]
-    labelled, key = 0, []
+    labelled, key, shapes, notes = 0, [], [], []
     for _key, name, hz, colour in lines:
         main = name in MAIN_LINES
-        figure.add_vline(x=hz, line=dict(color=colour, width=1.2 if main else 0.7, dash="dot"),
-                         opacity=0.9 if main else 0.45)
+        shapes.append(vline(hz, colour, 1.2 if main else 0.7, "dot", 0.9 if main else 0.45))
         if main:
             # Shaded band (±2 %) where this fault frequency can sit as speed varies a little
-            figure.add_vrect(x0=hz * 0.98, x1=hz * 1.02, fillcolor=colour, opacity=0.08, line_width=0, layer="below")
+            shapes.append(vband(hz * 0.98, hz * 1.02, colour, 0.08))
             # Coloured label tag, staggered so neighbouring tags do not overlap
-            figure.add_annotation(x=hz, y=1.0 - 0.075 * (labelled % 3), yref="paper", text=f"<b>{name}</b>",
-                                  showarrow=False, xanchor="left", yanchor="top", font=dict(size=10, color="white"),
-                                  bgcolor=colour, bordercolor=colour, borderpad=2, opacity=0.95)
+            notes.append(dict(x=hz, y=1.0 - 0.075 * (labelled % 3), yref="paper", text=f"<b>{name}</b>",
+                              showarrow=False, xanchor="left", yanchor="top", font=dict(size=10, color="white"),
+                              bgcolor=colour, bordercolor=colour, borderpad=2, opacity=0.95))
             labelled += 1
             key.append(f'<span style="color:{colour}">■</span> {name} {hz:.1f} Hz')
     if key and key_box:  # colour key in the top-right corner
-        figure.add_annotation(x=0.995, y=0.985, xref="paper", yref="paper", xanchor="right", yanchor="top",
-                              align="left", showarrow=False, text="<br>".join(key), font=dict(size=10, color="#203047"),
-                              bgcolor="rgba(255,255,255,0.92)", bordercolor="#cbd5e1", borderwidth=1, borderpad=6)
+        notes.append(dict(x=0.995, y=0.985, xref="paper", yref="paper", xanchor="right", yanchor="top",
+                          align="left", showarrow=False, text="<br>".join(key), font=dict(size=10, color="#203047"),
+                          bgcolor="rgba(255,255,255,0.92)", bordercolor="#cbd5e1", borderwidth=1, borderpad=6))
+    add_layout_items(figure, shapes, notes)
     if lines:  # every line, harmonics included, names itself on hover
         figure.add_trace(go.Scatter(
             x=[hz for _k, _n, hz, _c in lines], y=[float(y.max()) if y.size else 0] * len(lines), mode="markers",

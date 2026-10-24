@@ -160,10 +160,15 @@ class HistoryPageTests(unittest.TestCase):
     def test_click_picks_a_time_and_new_channel_resets_it(self):
         moment = datetime.fromtimestamp(self.first_ms / 1000).strftime("%Y-%m-%d %H:%M:%S")
         click = {"id": "diag-trend", "property": "clickData", "value": {"points": [{"x": moment}]}}
-        body = self.request("diag_pick_time", [click, self.channel()])
+        body = self.request("diag_pick_time", [click, self.channel()],
+                            [{"id": "diag-time", "property": "data", "value": None}])
         self.assertEqual(body["diag-time"]["data"] // 1000, self.first_ms // 1000)
-        body = self.request("diag_pick_time", [click, self.channel()], changed=["diag-channel.data"])
+        picked = {"id": "diag-time", "property": "data", "value": self.first_ms}
+        body = self.request("diag_pick_time", [click, self.channel()], [picked], changed=["diag-channel.data"])
         self.assertIsNone(body["diag-time"]["data"])
+        latest = {"id": "diag-time", "property": "data", "value": None}
+        body = self.request("diag_pick_time", [click, self.channel()], [latest], changed=["diag-channel.data"])
+        self.assertNotIn("diag-time", body)  # already at the latest: no second redraw
 
     def test_tree_overall_table_and_picks(self):
         with closing(app.get_db_connection()) as conn, conn:

@@ -16,6 +16,7 @@ import plotly.graph_objects as go
 from scipy.signal import find_peaks
 
 from .signals import G, MIN_ENVELOPE_FS
+from .spectrum_view import add_layout_items, vline
 
 MAX_MARKERS = 200
 REPEAT_STRENGTH = 0.2  # autocorrelation of the envelope at the repeat; random noise stays well below
@@ -115,10 +116,10 @@ def waveform_figure(values, fs, unit, rpm=None, tools=(), zoom="all", reference=
         end = min(end, int(zoom) * turn)
         figure.update_xaxes(range=[0, end])
     if "revs" in tools and turn:
-        for k in range(1, min(int(end / turn) + 1, MAX_MARKERS)):
-            figure.add_vline(x=k * turn, line=dict(color="#16a34a", width=1, dash="dash"), opacity=0.7)
-        figure.add_annotation(x=turn, y=1, yref="paper", yanchor="bottom", showarrow=False,
-                              text=f"1 turn = {turn * 1000:.1f} ms", font=dict(size=10, color="#16a34a"))
+        add_layout_items(figure, [vline(k * turn, "#16a34a", 1, "dash", 0.7)
+                                  for k in range(1, min(int(end / turn) + 1, MAX_MARKERS))],
+                         [dict(x=turn, y=1, yref="paper", yanchor="bottom", showarrow=False,
+                               text=f"1 turn = {turn * 1000:.1f} ms", font=dict(size=10, color="#16a34a"))])
     if impacts is not None and "impacts" in tools and len(impacts):
         index = np.clip(np.round(np.asarray(impacts) * fs).astype(int), 0, len(values) - 1)[:MAX_MARKERS]
         figure.add_trace(go.Scatter(x=index / fs, y=np.asarray(values)[index], mode="markers", name="Impact",

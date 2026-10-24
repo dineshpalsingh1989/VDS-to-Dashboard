@@ -190,9 +190,9 @@ def analysis_overlay():
         role="dialog", **{"aria-modal": "true", "aria-labelledby": "analysis-title"})
 
 
-def live_capture(storage, gid, ch, kind):
+def live_capture(channel, kind):
     """The latest spectrum or waveform the VDS sent, in the same form as a saved capture."""
-    channel = (storage or {}).get(gid, {}).get("channels", {}).get(ch, {})
+    channel = channel or {}
     data, context = channel.get(kind + "_data"), dict(channel.get(kind + "_context") or {})
     if not data:
         return None
@@ -303,7 +303,7 @@ def register(app, get_connection, data_folder, get_live=None):
         if selected_ms:
             return historian.nearest_capture(conn, gid, ch, kind, at_ms=selected_ms)
         saved = historian.nearest_capture(conn, gid, ch, kind, None)
-        live = live_capture(get_live(), gid, ch, kind) if get_live else None
+        live = live_capture(get_live(gid, ch), kind) if get_live else None
         if live and (not saved or (live["timestamp_ms"] or 0) >= saved["timestamp_ms"]):
             return live
         return saved
@@ -484,10 +484,12 @@ def register(app, get_connection, data_folder, get_live=None):
         return trigger["ch"], chosen
 
     @app.callback(Output("diag-time", "data"), [Input("diag-trend", "clickData"), Input("diag-channel", "data")],
-                  prevent_initial_call=True)
-    def diag_pick_time(click, _channel):
+                  State("diag-time", "data"), prevent_initial_call=True)
+    def diag_pick_time(click, _channel, current=None):
         if ctx.triggered_id != "diag-trend" or not click or not click.get("points"):
-            return None  # a new channel starts at its latest capture
+            # A new channel starts at its latest capture; when that is already so, change nothing,
+            # or every plot on the page is drawn a second time.
+            return None if current else no_update
         try:
             moment = datetime.fromisoformat(str(click["points"][0]["x"]).replace("T", " "))
         except ValueError:
@@ -579,7 +581,7 @@ def register(app, get_connection, data_folder, get_live=None):
             return html.Span(str(error), className="text-danger")
         if bearing and not found:
             return html.Span(f"Saved {bearing}, but it is not in the bearing library, so no lines can be drawn. "
-                             "Add it to iriv-edge/knowledge/bearings.csv, or in the asset registry on IRIV Edge AI.",
+                             "Add it to iriv-edge/knowledge/bearings.csv, or on the VDS130 page on IRIV Edge AI.",
                              className="text-warning")
         return html.Span(f"Saved {bearing or 'no bearing'} for {gid} CH{ch}.", className="text-success")
 

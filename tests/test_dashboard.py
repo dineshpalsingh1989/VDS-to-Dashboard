@@ -22,6 +22,9 @@ class DashboardTests(unittest.TestCase):
         self.database = os.path.join(self.directory.name, "test.db")
         self.patch = patch.object(app, "DB_FILE", self.database)
         self.patch.start()
+        self.approval = patch.dict(os.environ, {"VDS_DEVICE_APPROVAL": "0"})  # ingestion tests; see test_devices
+        self.approval.start()
+        self.addCleanup(self.approval.stop)
         app.setup_database()
         app.data_storage.clear()
         app.active_jobs.clear()

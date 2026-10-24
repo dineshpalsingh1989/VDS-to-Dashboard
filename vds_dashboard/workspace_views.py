@@ -10,7 +10,7 @@ from dash import Input, Output, State, dcc, html, dash_table, no_update
 from flask import request
 import dash_bootstrap_components as dbc
 
-from . import ai_views, historian, history_view
+from . import ai_views, devices_view, historian, history_view
 from .vds import spectrum_xy
 
 READ_CALLBACKS = {
@@ -35,11 +35,13 @@ def channel_selector(prefix):
 def assets_page():
     return html.Div(
         [
-            html.H3("Asset registry"),
+            html.H3("VDS130"),
             html.P(
-                "Map VDS channels to physical measurement locations and configure expected publishing intervals.",
+                "Allow new VDS units, see each unit's status, and map its channels to measurement locations.",
                 className="text-muted",
             ),
+            devices_view.section(),
+            html.H5("Measurement points"),
             channel_selector("asset"),
             *[
                 html.Div(

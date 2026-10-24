@@ -144,6 +144,7 @@ def main(argv=None):
     app.normalize_packet = lambda payload: normalize(payload, received_at=payload["timestamp"] / 1000)
     with app.get_db_connection() as conn:
         for gid in sorted({m["gid"] for m in MACHINES}):
+            historian.set_device_status(conn, gid, "allowed")  # as if a user allowed them on the VDS130 page
             historian.save_ai_gateway(conn, gid, True)
         for m in MACHINES:
             historian.save_ai_channel(conn, m["gid"], m["ch"], dict(
@@ -158,6 +159,9 @@ def main(argv=None):
     rng = np.random.default_rng(2026)
     steps = int(args.days * 86400 / STEP_S)
     end_ms = int(time.time() * 1000)
+    # A new unit that has just connected: it waits on the VDS130 page until someone allows it.
+    newcomer = dict(MACHINES[0], gid="VDS130-NEW-0042", ch="1")
+    feed(app, newcomer, *capture(newcomer, 1.0, np.random.default_rng(1)), end_ms - 60_000)
     start_ms = end_ms - steps * STEP_S * 1000
     print(f"Simulating {args.days:g} days of {len(MACHINES)} VDS sensors ({steps} captures each)...")
     for step in range(steps + 1):

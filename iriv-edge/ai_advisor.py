@@ -782,7 +782,7 @@ class Advisor:
                 name, probability = d["brain"]["top"][0]
                 text += f" Neural network ({d['brain']['where']}): {BRAIN_NAMES.get(name, name)} {probability:.0%}."
             if not rpm:
-                text += " No running speed is known, so faults cannot be named: enter a fixed RPM in the asset registry."
+                text += " No running speed is known, so faults cannot be named: enter a fixed RPM in the AI setup (gear on the channel)."
         elif kind == "waveform":
             if d.get("clipped"):
                 title = f"{label}: clipped waveform"
@@ -812,7 +812,7 @@ class Advisor:
         days = (now_ms - state.get("since_ms", now_ms)) / 86_400_000
         if days >= 3:
             text += (" Changed for %d days; if this is the new normal after maintenance, use Relearn or Repaired "
-                     "in the asset registry or the spectrum view." % days)
+                     "in the AI setup or the AI explanation." % days)
         score = max([p[1] for p in d.get("peaks", [])] + [abs(math.log(d["value"] / d["normal"])) * 10
                                                            if "value" in d else 0])
         return {"severity": severity, "gateway_id": gid, "channel": ch, "kind": kind, "score": round(score, 1),
@@ -888,7 +888,7 @@ class Advisor:
             notes = []
             if info.get("bearing_missing"):
                 notes.append(f"Bearing {info['bearing_missing']} is not in the bearing library; "
-                             "add it in the asset registry.")
+                             "add it on the VDS130 page.")
             if "spectrum" in states and not states["spectrum"].get("rpm"):
                 notes.append("This VDS reports no speed. Choose a fixed speed and enter the RPM.")
             if states.get("waveform", {}).get("envelope_note"):
@@ -944,7 +944,7 @@ class Advisor:
                 channels.setdefault((gid, ch), set())
         learning = sum(1 for p in channels.values() if "monitoring" not in p)
         if not self.enabled:
-            summary = "AI analysis is off for every VDS. Turn it on per VDS in the asset registry."
+            summary = "AI analysis is off for every VDS. Turn it on per channel in the AI setup (gear on the channel)."
         else:
             summary = (f"Monitoring {len(channels) - learning} channels, still learning {learning}; "
                        f"{processed} new samples analysed in {elapsed:.1f} s.")

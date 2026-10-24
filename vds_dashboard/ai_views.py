@@ -467,7 +467,7 @@ def register(app, get_connection, data_folder):
                          html.Small([html.I(className="fas fa-microchip me-1"), neural], className="text-muted d-block")
                          if neural else None], className="mb-2")
         if not rows:
-            return [head, html.P("No sensors have AI analysis switched on. Switch it on in the asset registry.",
+            return [head, html.P("No sensors have AI analysis switched on. Switch it on in the AI setup (gear on each channel on Home).",
                                  className="text-muted")]
         return [head, dbc.Table([html.Thead(html.Tr([html.Th(h) for h in ("Machine", "Sensor", "Status", "Trend",
                                                                          "Notes")])), html.Tbody(rows)],
