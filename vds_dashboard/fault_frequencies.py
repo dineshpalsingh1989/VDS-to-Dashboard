@@ -42,6 +42,19 @@ FAMILIES = (
     ("electrical", "Electrical", "#1f77b4", [("line", "Line")]),
 )
 FAMILY_COLOURS = {"BPFO": "#d62728", "BPFI": "#ff7f0e", "BSF": "#9467bd", "FTF": "#8c564b"}
+# Fault lines that belong to the part a sensor is on: a motor has no gear mesh or blade pass,
+# a pump or fan has no gear mesh, and mains (electrical) lines belong to motors.
+PART_FAMILIES = {"motor": ("speed", "bearing", "electrical"), "pump": ("speed", "bearing", "gear"),
+                 "fan": ("speed", "bearing", "gear"), "compressor": ("speed", "bearing", "gear"),
+                 "gearbox": ("speed", "bearing", "gear")}
+GEAR_LABELS = {"gearbox": "Gear mesh", "pump": "Vane pass", "fan": "Blade pass", "compressor": "Vane / blade pass"}
+
+
+def families_for(part):
+    """(key, label) of the fault line families that make sense for the part; all of them when unknown."""
+    keys = PART_FAMILIES.get(part or "", tuple(key for key, *_ in FAMILIES))
+    return [(key, GEAR_LABELS.get(part, label) if key == "gear" else label) for key, label, _c, _t in FAMILIES
+            if key in keys]
 
 
 def bearing_orders(balls, ball_diameter, pitch_diameter, contact_angle_deg=0.0):
@@ -144,8 +157,9 @@ def frequency_table(info, rpm):
 def marker_lines(info, rpm, families, harmonics, fmax):
     """Fault frequency markers for a spectrum plot: [(family key, label, Hz, colour)]."""
     lines = []
+    allowed = {key for key, _label in families_for(info.get("machine_type"))}
     for key, _label, colour, tokens in FAMILIES:
-        if key not in families:
+        if key not in families or key not in allowed:
             continue
         for token, short in tokens:
             count = max(harmonics, 1) if token != "line" else 3

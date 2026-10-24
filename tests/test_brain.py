@@ -18,8 +18,9 @@ from train_brain import dataset
 class FakeHailo:
     """Just enough of hailo_platform to drive HailoBackend the way HailoRT does."""
 
-    def __init__(self, weights, fail=False, raw_scores=False):
+    def __init__(self, weights, fail=False, raw_scores=False, refuse=()):
         self.weights, self.fail, self.raw_scores, self.calls = weights, fail, raw_scores, []
+        self.refuse, self.loaded = refuse, None
         test = self
 
         class Info(SimpleNamespace):
@@ -28,6 +29,7 @@ class FakeHailo:
         class HEF:
             def __init__(self, path):
                 test.calls.append(("hef", Path(path).name))
+                test.loaded = Path(path).name
 
             def get_input_vstream_infos(self):
                 return [Info(name="vibration_brain/input_layer1", shape=(brain.INPUT_SIZE,))]
@@ -45,6 +47,8 @@ class FakeHailo:
 
         class VDevice:
             def configure(self, hef, params):
+                if test.loaded in test.refuse:
+                    raise RuntimeError("HEF compiled for another Hailo chip")
                 test.calls.append(("configure", params))
                 return [Group()]
 
@@ -95,13 +99,13 @@ class BrainTests(unittest.TestCase):
         with np.load(brain.MODEL_DIR / "vibration_brain.npz") as data:
             cls.weights = {k: data[k].astype(np.float32) for k in ("w1", "b1", "w2", "b2", "w3", "b3")}
 
-    def model_dir(self, hef=False):
+    def model_dir(self, hef=False, names=("vibration_brain.hef",)):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         path = Path(folder.name)
         (path / "vibration_brain.npz").write_bytes((brain.MODEL_DIR / "vibration_brain.npz").read_bytes())
-        if hef:
-            (path / "vibration_brain.hef").write_bytes(b"stand-in HEF")
+        for name in names if hef else ():
+            (path / name).write_bytes(b"stand-in HEF")
         return path
 
     def test_shipped_model_names_fault_patterns(self):
@@ -135,6 +139,13 @@ class BrainTests(unittest.TestCase):
             self.assertEqual(model.predict(row)[0][0], "unbalance")
             self.assertIn(("infer", (1, brain.INPUT_SIZE)), fake.calls)
             self.assertIn(("activate", "group-params"), fake.calls)
+
+    def test_picks_the_hef_this_chip_accepts(self):
+        names = ("vibration_brain_hailo8.hef", "vibration_brain_hailo8l.hef")
+        fake = FakeHailo(self.weights, refuse=("vibration_brain_hailo8.hef",))  # a 13 TOPS HAT
+        model = brain.Brain(self.model_dir(hef=True, names=names), hpf=fake)
+        self.assertEqual(model.backend.name, "hailo")
+        self.assertIn("vibration_brain_hailo8l.hef", model.status)
 
     def test_falls_back_to_the_cpu_if_the_hat_fails(self):
         fake = FakeHailo(self.weights, fail=True)

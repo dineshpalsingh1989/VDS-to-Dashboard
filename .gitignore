@@ -215,3 +215,8 @@ __marimo__/
 
 # IRIV Edge AI demo output (recreated by iriv-edge/demo/run_demo.py)
 iriv-edge/demo/output/
+
+# Hailo Dataflow Compiler wheel (licensed by Hailo; never commit)
+iriv-edge/hailo/dfc/*.whl
+# Hailo compiler intermediate files
+iriv-edge/models/*.har

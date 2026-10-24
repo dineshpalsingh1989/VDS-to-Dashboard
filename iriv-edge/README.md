@@ -259,20 +259,29 @@ gives every AI finding a second opinion:
 | `brain.py` | Runs the model: Hailo AI HAT+ through HailoRT, or the CPU |
 | `models/vibration_brain.npz` | The trained weights (CPU) |
 | `models/vibration_brain.onnx` | The same network for Hailo's compiler |
-| `models/vibration_brain.hef` | The compiled model for the HAT (you build it, see below) |
+| `models/vibration_brain_hailo8.hef`, `..._hailo8l.hef` | The compiled model for the 26 and 13 TOPS HAT (built once, see below) |
 | `hailo/train_brain.py` | Trains the model on a PC (numpy, fixed seed) |
-| `hailo/compile_hef.py` | Compiles the ONNX file into a HEF (Hailo Dataflow Compiler, x86 Linux) |
+| `hailo/compile_hef.py`, `hailo/build_hef.sh`, `hailo/Dockerfile` | Compile the ONNX file into HEFs with Hailo's Dataflow Compiler |
 
-To use the HAT:
+What is automatic:
 
-1. `bash iriv-edge/install.sh --with-hailo`, reboot, then run `install.sh` again.
-2. On an x86 Linux PC with Hailo's Dataflow Compiler (free account on the Hailo
-   Developer Zone): `python iriv-edge/hailo/compile_hef.py --arch hailo8l` for the
-   13 TOPS HAT, or `--arch hailo8` for 26 TOPS.
-3. Copy `vibration_brain.hef` to `iriv-edge/models/` on the IRIV Edge AI and restart
-   the advisor: `sudo systemctl restart vds-ai-advisor`.
-4. Check it: `python3 iriv-edge/brain.py` prints which backend runs and how often the
-   HAT agrees with the CPU model. Health Agents shows the same status.
+- `install.sh` installs the HAT software (hailo-all) by itself when an AI HAT+ is
+  fitted, tells you if one reboot is needed, and prints which backend the model uses.
+- The advisor picks the HEF the chip accepts (26 or 13 TOPS) and falls back to the
+  CPU when there is no HAT, no HEF, or a HAT fault. Health Agents shows which.
+
+The one manual step is compiling the HEFs, because Hailo's compiler is licensed
+(free account on the Hailo Developer Zone) and runs only on an x86-64 Linux PC:
+
+1. Download the Dataflow Compiler wheel and put it in `iriv-edge/hailo/dfc/`
+   (git ignores it).
+2. Run `bash iriv-edge/hailo/build_hef.sh`. It builds a Docker image with the
+   compiler and writes both HEFs into `iriv-edge/models/`.
+3. Commit the two `.hef` files. From then on every download of the repository
+   carries them, and the IRIV uses the HAT after `git pull` and
+   `sudo systemctl restart vds-ai-advisor`.
+4. Check on the IRIV: `python3 iriv-edge/brain.py` prints the backend and how
+   often the HAT agrees with the CPU model.
 
 The model is trained on synthetic fault patterns (about 93 % right on fresh
 synthetic cases; the three bearing faults are the ones it mixes up, which is why

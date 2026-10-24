@@ -6,7 +6,8 @@ set -Eeuo pipefail
 usage() {
   printf '%s\n' 'Usage: bash iriv-edge/install.sh [--image] [--with-hailo] [--no-advisor] [--data-dir PATH]' \
     '  --image        Pull the published container instead of building it on the device.' \
-    '  --with-hailo   Install the AI HAT+ software (hailo-all) so the neural model runs on the HAT. Reboot afterwards.' \
+    '  --with-hailo   Install the AI HAT+ software (hailo-all) even if no HAT is detected yet.' \
+    '                 (It is installed automatically when an AI HAT+ is fitted.)' \
     '  --no-advisor   Start only the dashboard.' \
     '  --data-dir     Dashboard data folder when not using the Docker volume (native install).'
 }
@@ -28,11 +29,16 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 [[ "$(uname -m)" == aarch64 ]] || printf '%s\n' 'Note: this is not a 64-bit Arm system; continuing anyway.' >&2
 
-if (( hailo )); then
+# Hailo AI HAT+: install HailoRT when the HAT is fitted (or asked for) so the advisor's neural model runs on it.
+need_reboot=0
+if lspci 2>/dev/null | grep -qi hailo || [[ -e /dev/hailo0 ]]; then
+  hailo=1
+fi
+if (( hailo )) && ! python3 -c 'import hailo_platform' 2>/dev/null; then
   sudo apt-get update
   sudo apt-get install -y hailo-all
-  printf '%s\n' 'Installed hailo-all. Reboot, then run this script again without --with-hailo.'
-  exit 0
+  [[ -e /dev/hailo0 ]] || need_reboot=1
+  printf '%s\n' 'Installed the Hailo AI HAT+ software (hailo-all).'
 fi
 
 if [[ -z "$data_dir" ]]; then
@@ -72,6 +78,15 @@ sudo systemctl enable --now vds-ai-advisor.service
 
 if compgen -G '/sys/block/nvme*' >/dev/null && ! lsblk -nro MOUNTPOINT /dev/nvme0n1 2>/dev/null | grep -q .; then
   printf '%s\n' 'An NVMe SSD is fitted but not mounted. To keep AI data on it: sudo bash iriv-edge/setup-ssd.sh'
+fi
+# Which backend the neural model uses: the Hailo AI HAT+ (with a compiled model in iriv-edge/models/) or the CPU.
+python3 iriv-edge/brain.py || true
+if (( need_reboot )); then
+  printf '%s\n' 'Reboot once so the Hailo AI HAT+ driver loads; the advisor then uses the HAT by itself.'
+fi
+if (( hailo )) && ! compgen -G 'iriv-edge/models/*.hef' >/dev/null; then
+  printf '%s\n' 'No compiled Hailo model in iriv-edge/models/ yet, so the neural model runs on the CPU.' \
+    'Build it once on an x86-64 Linux PC: bash iriv-edge/hailo/build_hef.sh (see iriv-edge/README.md).'
 fi
 printf '%s\n' 'AI advisor running. Next, open "AI analysis" in the dashboard to switch the AI on' \
   'for each VDS and describe each sensor (machine, location, bearing, speed).' \

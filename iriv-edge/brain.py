@@ -15,7 +15,9 @@ network works for every machine and speed. It is small (512-64-32-7, about
 a millisecond on the CM5 processor.
 
 Backends, chosen at start-up:
-  * hailo : models/vibration_brain.hef on the Hailo AI HAT+ through HailoRT (hailo_platform);
+  * hailo : a compiled model in models/ on the Hailo AI HAT+ through HailoRT (hailo_platform).
+            vibration_brain.hef if you compiled one yourself, else vibration_brain_hailo8.hef
+            (26 TOPS HAT) or vibration_brain_hailo8l.hef (13 TOPS HAT), whichever the chip accepts;
   * cpu   : the same weights from models/vibration_brain.npz with numpy.
 The HEF is compiled from the ONNX export of the same weights (see iriv-edge/README.md, "The AI HAT+"),
 so both give the same answer apart from the HAT's 8-bit rounding.
@@ -32,6 +34,7 @@ import numpy as np
 log = logging.getLogger("vds-ai-advisor")
 HERE = Path(__file__).resolve().parent
 MODEL_DIR = HERE / "models"
+HEF_NAMES = ("vibration_brain.hef", "vibration_brain_hailo8.hef", "vibration_brain_hailo8l.hef")
 ORDERS_MAX, ORDER_BINS = 16.0, 256
 INPUT_SIZE = 2 * ORDER_BINS
 CLASSES = ("normal", "unbalance", "misalignment", "looseness", "outer_race", "inner_race", "rolling_element")
@@ -142,17 +145,18 @@ class Brain:
         with np.load(npz, allow_pickle=False) as data:
             weights = {k: data[k].astype(np.float32) for k in ("w1", "b1", "w2", "b2", "w3", "b3")}
             self.version = str(data["version"]) if "version" in data else "1"
-        hef = self.model_dir / "vibration_brain.hef"
-        if use_hailo and hef.exists():
-            try:
+        hefs = [self.model_dir / name for name in HEF_NAMES if (self.model_dir / name).exists()]
+        for hef in hefs if use_hailo else []:
+            try:  # a HEF compiled for the other Hailo chip is refused; then try the next one
                 self.backend = HailoBackend(hef, hpf)
-                self.status = "Neural model running on the Hailo AI HAT+."
+                self.status = f"Neural model running on the Hailo AI HAT+ ({hef.name})."
+                break
             except Exception as error:  # noqa: BLE001  no HAT, no driver or a HEF for another chip
-                log.info("Hailo AI HAT+ not used (%s); running the neural model on the CPU.", error)
+                log.info("Hailo AI HAT+ not used with %s (%s).", hef.name, error)
                 self.status = f"Neural model running on the CPU (Hailo AI HAT+ not available: {error})."
         if self.backend is None:
             self.backend = CpuBackend(weights)
-            if not hef.exists():
+            if not hefs:
                 self.status = "Neural model running on the CPU (no compiled Hailo model in models/)."
         self.cpu = CpuBackend(weights)
 

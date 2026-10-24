@@ -71,6 +71,23 @@ class SetupRuleTests(unittest.TestCase):
         self.assertIn("background noise at high frequency rose 4 dB", lines[1])
 
 
+class FaultLineTests(unittest.TestCase):
+    def test_fault_lines_follow_the_part(self):
+        from vds_dashboard.fault_frequencies import families_for, marker_lines
+        self.assertEqual(families_for("motor"), [("speed", "Running speed"), ("bearing", "Bearing"),
+                                                 ("electrical", "Electrical")])
+        self.assertIn(("gear", "Gear mesh"), families_for("gearbox"))
+        self.assertIn(("gear", "Vane pass"), families_for("pump"))
+        self.assertNotIn("electrical", [key for key, _label in families_for("fan")])
+        self.assertEqual(len(families_for(None)), 4)  # part not set: every family
+        info = {"gear_teeth": 23, "blades": 6, "line_frequency_hz": 50}
+        every = {"speed", "bearing", "gear", "electrical"}
+        motor = {key for key, *_ in marker_lines(dict(info, machine_type="motor"), 1480, every, 1, 2000)}
+        self.assertEqual(motor, {"speed", "electrical"})
+        gearbox = {key for key, *_ in marker_lines(dict(info, machine_type="gearbox"), 1480, every, 1, 2000)}
+        self.assertEqual(gearbox, {"speed", "gear"})
+
+
 class ChannelCardTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -203,6 +220,13 @@ class ChannelCardTests(unittest.TestCase):
         for text in ("CH1 H", "CH2 H", "CH3 A", "Motor", "Pump", "current"):
             self.assertIn(text, drawing)
         self.assertNotIn("CH4", drawing)  # another machine
+
+    def test_spectrum_popup_offers_only_the_parts_fault_lines(self):
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_channel(conn, "GW1", "1", {"machine_type": "motor"})
+        target = {"id": "modal-target", "property": "data", "value": {"gid": "GW1", "ch": "1", "type": "spec"}}
+        options = self.ok(self.request("ai_modal_families", [target], viewer=True))["modal-families"]["options"]
+        self.assertEqual([o["value"] for o in options], ["speed", "bearing", "electrical"])
 
     def test_bell_explains_the_finding_with_a_picture(self):
         self.write_report([FINDING])

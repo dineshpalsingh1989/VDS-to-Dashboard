@@ -20,10 +20,10 @@ from dash import ALL, Input, Output, State, ctx, dcc, html, no_update
 from flask import request
 
 from . import historian
-from .fault_frequencies import FAMILIES, LIBRARY, find_bearing, load_bearings
+from .fault_frequencies import FAMILIES, LIBRARY, families_for, find_bearing, load_bearings
 
 READ_CALLBACKS = {"ai_load_setup", "ai_bearing_preview", "ai_bearing_mode", "ai_health_progress", "ai_report_list",
-                  "ai_show_report"}
+                  "ai_show_report", "ai_modal_families"}
 NOT_IRIV = "AI analysis is only available on IRIV Edge AI installs (VDS_EDGE_AI=1)."
 VERDICTS = (("confirmed", "Confirmed", "danger"), ("wrong", "Wrong (normal operation)", "secondary"),
             ("repaired", "Repaired", "success"))
@@ -95,7 +95,7 @@ def machine_info(conn, gid, ch, bearing=None):
     settings = historian.ai_channel_settings(conn, gid, ch)
     bearing = settings.get("bearing", "") if bearing is None else bearing
     info = {"line_frequency_hz": settings.get("line_frequency_hz") or 50, "gear_teeth": settings.get("gear_teeth"),
-            "blades": settings.get("blades"), "bearing": bearing}
+            "blades": settings.get("blades"), "bearing": bearing, "machine_type": settings.get("machine_type")}
     found = find_bearing(library(conn), bearing) if bearing else None
     if found:
         info["bearing_orders"] = found
@@ -435,6 +435,15 @@ def register(app, get_connection, data_folder):
         except (ValueError, TypeError) as error:
             return str(error)
         return f"Saved {bearing or 'no bearing'} for {target['gid']} CH{target['ch']}."
+
+    @app.callback(Output("modal-families", "options"), Input("modal-target", "data"), prevent_initial_call=True)
+    def ai_modal_families(target):
+        """Only the fault lines that belong to the part this sensor is on (a motor shows no gear or blade pass)."""
+        if not target:
+            return no_update
+        with closing(get_connection()) as conn:
+            part = historian.ai_channel_settings(conn, target["gid"], target["ch"]).get("machine_type")
+        return [{"label": label, "value": key} for key, label in families_for(part)]
 
     @app.callback(Output("ai-health-progress", "children"), Input("system_info_interval", "n_intervals"))
     def ai_health_progress(_n):
