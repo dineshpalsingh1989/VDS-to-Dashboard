@@ -1,34 +1,39 @@
-## Linux download and container distribution
+## VDS-to-Dashboard 1.2.0
 
-Download the `wilcoxon-vds-linux.tar.gz` asset and `SHA256SUMS` below.
-The archive contains the application source, documentation, and Docker launchers.
-Docker Engine with the Docker Compose plugin is required; Python is bundled in
-the container and does not need to be installed on the Linux host.
+**Plug and play.** A VDS130 that publishes for the first time waits on the new
+**VDS130** page; click **Allow** and it starts running on Home. Nothing it sends is
+used before that. Existing units keep running after the update.
+
+**One-command update.** `bash scripts/update.sh` fetches the latest version, keeps
+`.env`, the database, recordings, backups and the AI's learning, and restarts the
+dashboard the way it was started.
+
+**Analysis from Home.** Spectrum or Waveform on a channel card opens the full analysis
+for that channel, live first: trend history, spectrum with bearing defect lines,
+waveform with turn markers, an impact finder that names the matching fault frequency,
+an earlier waveform behind today's, orbit, and waterfall. It opens about twice as fast
+as before, and Home no longer redraws every card every two seconds.
+
+**Settings.** One Settings entry with tabs for Device, MQTT, Ethernet, Modbus TCP,
+OPC UA, Data storage, the new **Database & files** (database, tables, retention,
+backups, AI files) and Debug log.
+
+**IRIV Edge AI.** Per-channel AI setup (machine type, ISO class from power and
+foundation, speed, sensor position), a brain status and a flashing bell on each
+channel card, plain-language explanations with a picture of normal against now in
+mm/s, comparison of the sensors on one machine, and a neural second opinion on the
+Hailo AI HAT+ (CPU when no HAT is fitted).
+
+### Download
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
 tar -xzf wilcoxon-vds-linux.tar.gz
 cd wilcoxon-vds
-bash scripts/linux-start.sh --build
+bash scripts/linux-start.sh
 ```
 
-The launcher creates a private `.env` with a generated administrator password if
-one is not already configured. Open http://127.0.0.1:8050 on the Linux host and
-read `VDS_ADMIN_PASSWORD` in your local `.env` to sign in. Keep that file private.
-For a remote host, use `ssh -L 8050:127.0.0.1:8050 user@linux-host` and open the same
-address on your own computer.
-
-The `--build` path works from this public download without registry credentials.
-The container package is public: `bash scripts/linux-start.sh --image` pulls the
-prebuilt image without a GitHub login. Images target Linux AMD64 and ARM64 (64-bit).
-
-Features include asset/channel mapping, contextual measurements, continuous
-scalar history, recording jobs, alarms and acknowledgments, diagnostic plots,
-advisory health checks, verified backups, and reports. SQLite data persists in a
-Docker volume. An MQTT broker and physical VDS device are configured separately.
-
-Automated checks cover Python syntax, dependency compatibility, tests, Linux
-launcher syntax, container startup, HTTP routes, and verified backup creation.
-These software checks do not replace commissioning with actual VDS/PLC hardware.
-
-Container package: https://github.com/dineshpalsingh1989/VDS-to-Dashboard/pkgs/container/wilcoxon-vds
+Open http://127.0.0.1:8050 and sign in with `admin` and the `VDS_ADMIN_PASSWORD` the
+launcher saved in `.env`. `bash scripts/linux-start.sh --image` pulls the prebuilt
+Linux AMD64/ARM64 image instead of building. Docker Engine with the Compose plugin is
+required; Python is inside the container.

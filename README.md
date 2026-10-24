@@ -1,426 +1,266 @@
-﻿# VDS-to-Dashboard
+# VDS-to-Dashboard
 
-*Vibration monitoring and diagnostics for Wilcoxon VDS130.*
+*Plug-and-play vibration monitoring and diagnostics for the Wilcoxon VDS130.*
 
 [![GitHub checks](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml/badge.svg)](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml)
-[Download for Linux](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest) · [Container package](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/pkgs/container/wilcoxon-vds) · [Source ZIP](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/archive/refs/heads/main.zip)
+[Download for Linux](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest) ·
+[Container package](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/pkgs/container/wilcoxon-vds) ·
+[Source ZIP](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/archive/refs/heads/main.zip) ·
+**[Try the live demo →](https://dineshpalsingh1989.github.io/VDS-to-Dashboard/)**
 
-**[Open the interactive dashboard demo →](https://dineshpalsingh1989.github.io/VDS-to-Dashboard/)**
+Connect a VDS130 to your MQTT broker, allow it on the dashboard, and it starts
+running: live readings for every channel, trends, spectra and waveforms, alarms,
+history, backups, and Modbus TCP / OPC UA for your PLC or SCADA. On a Cytron IRIV
+Edge AI it also learns each machine's normal vibration and explains in plain words
+when something changes.
 
-Try the real application's layout in your browser with no installation or login.
-The demo uses the same dark header, full navigation menu, device accordion,
-four measurement cards, RPM card, and Plotly charts. Explore all 14 pages,
-toggle channel trends, open waveform/spectrum plots, change the diagnostic
-channel/order axis, and download sample history CSV. Data is a captured synthetic
-example, not live measurements. Configuration and service controls are disabled.
-The preview never connects to equipment or your database.
+![Home: every VDS130 unit and channel at a glance, with AI status, setup and finding bell](docs/images/home.png)
 
-MQTT ingestion, a SQLite historian, measurement-aware alarms, diagnostic plots,
-and advisory health agents for Wilcoxon VDS130 data. The dashboard also exposes
-selected values and data quality through Modbus TCP and OPC UA.
+<sub>All screenshots use synthetic data from the built-in demo, not measurements from production equipment.</sub>
 
-## Download and run on Linux
+## Contents
 
-Install [Docker Engine and the Docker Compose plugin](https://docs.docker.com/engine/install/)
-first (Compose 2.20 or newer). The container includes Python and the application's
-dependencies. Linux AMD64 PCs/servers and ARM64 systems use the same launcher;
-32-bit Raspberry Pi operating systems are not supported by the published images.
+- [Quick start](#quick-start) · [Update](#update-in-one-command) · [Connect a VDS130](#connect-a-vds130-plug-and-play)
+- [What you get](#what-you-get) · [AI on the IRIV Edge AI](#ai-on-the-cytron-iriv-edge-ai) · [How it works](#how-it-works)
+- [Data and storage](#data-and-storage) · [Settings reference](#settings-reference) · [Development](#development)
+
+## Quick start
+
+You need a 64-bit Linux computer (PC, server or Raspberry Pi OS 64-bit) with
+[Docker Engine and the Compose plugin](https://docs.docker.com/engine/install/).
+Python is inside the container.
 
 ```bash
-curl -fL https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/wilcoxon-vds-linux.tar.gz -o wilcoxon-vds-linux.tar.gz
-curl -fL https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/SHA256SUMS -o SHA256SUMS
+git clone https://github.com/dineshpalsingh1989/VDS-to-Dashboard.git
+cd VDS-to-Dashboard
+bash scripts/linux-start.sh
+```
+
+Open **http://127.0.0.1:8050** and sign in as `admin` with the password the script
+saved in `.env` (it is never printed). Then add your broker under
+**Settings > MQTT**.
+
+<details>
+<summary>Other ways to install: release download, prebuilt image, Windows, IRIV Edge AI</summary>
+
+**Release download with checksum**
+
+```bash
+curl -fLO https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/wilcoxon-vds-linux.tar.gz
+curl -fLO https://github.com/dineshpalsingh1989/VDS-to-Dashboard/releases/latest/download/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf wilcoxon-vds-linux.tar.gz
-cd wilcoxon-vds
-bash scripts/linux-start.sh --build
+tar -xzf wilcoxon-vds-linux.tar.gz && cd wilcoxon-vds
+bash scripts/linux-start.sh
 ```
 
-Open **http://127.0.0.1:8050** on that Linux machine. Sign in with `admin` and the
-generated `VDS_ADMIN_PASSWORD` saved in `.env`. The launcher keeps that file private
-and preserves an existing configuration. Configure your MQTT broker in the dashboard.
-For a remote Linux host, run `ssh -L 8050:127.0.0.1:8050 user@linux-host` from your
-own computer, then open the same browser address locally.
+**Prebuilt image** (no build on the device): `bash scripts/linux-start.sh --image`
+pulls `ghcr.io/dineshpalsingh1989/wilcoxon-vds:latest` without a login.
 
-To download current source without waiting for a release, use **Source ZIP** above,
-extract it, and run `bash scripts/linux-start.sh --build` inside its folder.
+**Cytron IRIV Edge AI**: `bash iriv-edge/install.sh`. It also installs the AI advisor
+and, when an AI HAT+ is fitted, the Hailo software. See [iriv-edge/README.md](iriv-edge/README.md).
 
-### Run the prebuilt container package
+**Windows (for testing)**: install Python 3.14, then
+`python -m venv .venv`, `.venv\Scripts\python -m pip install -r requirements.txt`,
+`.venv\Scripts\python app.py`.
 
-The published package allows anonymous downloads. Use the same extracted folder with:
+**Remote Linux host**: run `ssh -L 8050:127.0.0.1:8050 user@host` on your computer and
+open the same address locally. For permanent remote access, put HTTPS in front.
+
+</details>
+
+## Update in one command
 
 ```bash
-bash scripts/linux-start.sh --image
+bash scripts/update.sh
 ```
 
-This pulls `ghcr.io/dineshpalsingh1989/wilcoxon-vds:latest` instead of building.
-Set `VDS_IMAGE=ghcr.io/dineshpalsingh1989/wilcoxon-vds:1.1.0` in `.env` to pin a
-release. No GitHub login is required. If an image download is unavailable, use
-`--build` to build from the public source instead.
+It fetches the latest version (with `git pull`, or by downloading and checking the
+latest release), then restarts the dashboard the same way you started it. Your
+`.env`, the database, recordings, backups and the AI's learning are kept. On an
+IRIV Edge AI it also updates and restarts the AI advisor.
 
-Stop with `docker compose --env-file .env -f docker/compose.yaml down`. For image-only installs, use
-`docker compose --env-file .env -f docker/compose.image.yaml down`. Keep the named volume to retain
-SQLite data. Both Compose files use the project name `wilcoxon-vds`; existing
-installs should set `COMPOSE_PROJECT_NAME` to their original project name before
-upgrading so they continue using their existing volume.
+## Connect a VDS130 (plug and play)
 
-### What the GitHub language bar means
+1. Point the VDS130's MQTT output at your broker, and the dashboard at the same
+   broker (**Settings > MQTT**).
+2. When the unit publishes for the first time, Home shows **"New VDS130 found"**.
+   Open **VDS130**, check the serial number, and click **Allow**.
+3. With its next message the unit appears on Home and starts running. Click
+   **Block** for a unit you do not want; its messages are ignored.
 
-The Python percentage describes the repository's source-code languages. It is
-not an installation requirement or a quality score. Docker bundles Python for
-Linux users; **Packages** contains built container images, **Releases** contains
-download bundles, and **Actions** shows automated code-check results.
+Nothing an unknown unit sends is stored or shown before you allow it. Units that
+already sent data before this feature existed are allowed automatically.
 
-![Dashboard with four vibration channels, RPM, measurement settings, and a velocity trend](docs/images/dashboard.png)
+![VDS130 page: a new unit waiting for approval, and every unit's status](docs/images/vds130.png)
 
-Screenshots use synthetic pump measurements and demonstration identifiers. They
-show the actual application; they are not measurements from production equipment.
-Click any screenshot to view it at full size.
+## What you get
+
+### Home: everything live
+
+One card per channel with velocity, acceleration and the other readings the VDS
+sends, a status pill (fresh, stale, warning, alert), the speed card, and an
+overview of units, live sensors, alarms and AI findings. Home redraws only when new
+data arrives, and it works on a phone too.
+
+<p align="center"><img src="docs/images/mobile.png" alt="Home on a phone" width="260"></p>
+
+### Analysis: click Spectrum or Waveform on any channel
+
+The full analysis opens for that channel, starting on the **live** reading:
+
+- **Trend** of any reading (Acc RMS, Vel RMS, peak, displacement, crest factor,
+  standard deviation). Click any moment to open the spectrum and waveform saved
+  closest to it; one of each is kept every 30 minutes for 90 days.
+- **Spectrum** in acceleration, velocity (mm/s) or envelope, with Hz and CPM, the
+  strongest peaks named, running-speed harmonics, and the bearing's defect
+  frequencies (BPFO, BPFI, BSF, FTF). Type the bearing number, for example 6205-2RS,
+  and the lines appear. Fault lines follow the part: a motor shows no gear or blade
+  pass.
+- **Waveform** with RMS, peak, crest factor and kurtosis, a line at every shaft turn,
+  an **impact finder** ("81 impacts, every 11.2 ms = 89.0 Hz: BPFO"), an earlier
+  waveform behind today's, zoom to 1 or 5 turns, and an **orbit** when a horizontal
+  and a vertical sensor sit at the same bearing.
+- **Waterfall** of recent spectra, CSV download, and a searchable bearing database.
+
+| Spectrum with fault lines | Waveform with turns and impacts |
+| --- | --- |
+| ![Spectrum with bearing defect lines, harmonics and named peaks](docs/images/analysis-spectrum.png) | ![Waveform zoomed to five turns with turn markers and impacts named as BPFO](docs/images/analysis-waveform.png) |
+
+### Alarms, history and reports
+
+- **Alarm management**: per-channel, measurement-aware thresholds with hysteresis and
+  persistence; events are kept and can be acknowledged.
+- **History Explorer**: trends and CSV export. **Reports and backups**: daily reports
+  and verified database backups.
+- **Health Agents**: connectivity, stale sensors, data quality, disk space and
+  baseline changes.
+- **Modbus TCP and OPC UA**: chosen values plus data age, validity and communication
+  status for your PLC or SCADA.
+- **Settings**: Device (serial number, uptime, memory, storage, CPU, IP), MQTT,
+  Ethernet, Modbus TCP, OPC UA, Data storage, **Database & files**, Debug log.
+
+![Alarm settings and a warning event with measurement context](docs/images/alarm-management.png)
+
+## AI on the Cytron IRIV Edge AI
+
+On an IRIV Edge AI the dashboard gains an AI that runs quietly in the background and
+never controls a machine:
+
+- **Learns each machine's normal** spectrum, envelope, waveform and readings, then
+  watches for change. It does not start until it knows the machine type, power and
+  foundation (which give the ISO 20816 / 10816 class) and the running speed.
+- **Each channel card** shows a brain (AI off, needs setup, learning 40 %, watching,
+  or the fault found), a gear for the **AI setup**, and a **bell** that flashes when
+  there is a finding.
+- **The bell explains in plain words**: what the AI thinks is wrong and how sure it
+  is, what changed ("at 88.8 Hz the vibration went from 0.42 to 2.6 mm/s, about
+  6 times normal"), a picture of normal against now, why, what to do, and buttons to
+  confirm, reject or mark as repaired. That feedback teaches it.
+- **Compares the sensors on one machine** (axial against radial, vertical against
+  horizontal, drive end against free end) for misalignment, looseness and where the
+  source is.
+- **Neural second opinion** on the Hailo AI HAT+, or the processor when there is no HAT.
+
+| The bell: why the AI thinks there is an issue | AI setup with ISO class and sensor positions |
+| --- | --- |
+| ![AI explanation with plain-language diagnosis, changed peaks circled and feedback buttons](docs/images/ai-explanation.png) | ![AI setup window with ISO zones and a drawing of motor, coupling and driven part](docs/images/ai-setup.png) |
+
+Try it on any computer, no hardware needed:
+
+```bash
+python iriv-edge/demo/run_demo.py      # simulated plant, opens on http://127.0.0.1:8060
+```
+
+Details: [iriv-edge/README.md](iriv-edge/README.md).
 
 ## How it works
-
-<p align="center">
-  <img src="docs/images/wilcoxon-vds130.jpg" alt="Wilcoxon VDS130 vibration data source" width="420">
-</p>
 
 ```mermaid
 flowchart LR
     Sensors["IEPE sensors + tachometer"] --> VDS["Wilcoxon VDS130"]
-    VDS -->|MQTT messages| Broker["Your MQTT broker"]
+    VDS -->|MQTT| Broker["Your MQTT broker"]
     Broker --> App["VDS-to-Dashboard"]
-    App --> DB[("SQLite historian")]
-    App --> UI["Browser dashboard"]
-    DB --> Analysis["Alarms, baselines, health checks"]
-    Analysis --> UI
-    DB --> Files["Reports, exports, verified backups"]
-    App --> Gateway["Modbus TCP / OPC UA"]
-    Gateway --> PLC["PLC / SCADA"]
+    App --> DB[("SQLite database")]
+    App --> UI["Browser: Home, Analysis, Alarms"]
+    DB --> Analysis["Alarms, history, health checks"]
+    App --> Gateway["Modbus TCP / OPC UA"] --> PLC["PLC / SCADA"]
+    DB --> AI["AI advisor (IRIV Edge AI only)"] -->|findings| UI
 ```
 
-The VDS publishes measurements to your broker. The application validates each
-message, preserves its measurement settings, and stores scalar history in SQLite.
-Recording jobs also retain raw waveforms and spectra. Operators review trends,
-alarm events, and advisory findings through the browser. Docker packages the
-application; the database remains SQLite on a persistent volume.
-
-## Visual walkthrough
-
-### 1. Connect and identify the measurement point
-
-Configure the broker in **Settings > MQTT** and restart the application. When data
-arrives, open **Asset registry**, select a channel, and enter the site, machine,
-bearing location, direction, and expected publishing interval. Click **Save asset**.
-
-![Asset registry mapping a VDS channel to a pump bearing and publishing interval](docs/images/asset-registry.png)
-
-### 2. Configure and review alarms
-
-Open **Alarm management**, choose a channel and metric, and check the displayed
-unit, filter, and detection method. Set machine-specific thresholds, recovery
-hysteresis, and consecutive captures, then enable and save the rule. The event
-table records transitions; select an event and click **Acknowledge selected event**
-to record the operator's review. The screenshot's thresholds are demonstration values.
-
-![Alarm settings and a persisted warning event with measurement context](docs/images/alarm-management.png)
-
-### 3. Machine history: click any moment to see its spectrum
-
-Open **Machine history**. Pick a machine and channel in the tree (with search) or the
-channel tabs; the **Overall** table shows each channel's latest readings, and clicking
-a value plots it. Turn readings on with the coloured chips (Acc RMS, Vel RMS, 0-P,
-displacement, crest factor, standard deviation), each on its own axis, and zoom with
-the range slider. Click anywhere on the history: the spectrum and waveform saved
-closest to that moment open below, with the time difference shown. Ticks along the
-bottom of the history mark where saved spectra exist.
-
-Type the **bearing** at the measurement point (for example 6205-2RS) and its defect
-frequencies appear in the header and as lines on the spectrum. Type a **speed** in RPM
-or Hz to override the measured one; running-speed harmonics are marked with red
-diamonds. The toolbar switches log x, log y, harmonics, bearing lines and peaks.
-
-The dashboard saves one spectrum and one waveform per channel every 30 minutes and
-keeps them 90 days (`VDS_SNAPSHOT_INTERVAL_S`, `VDS_SNAPSHOT_RETENTION_DAYS`), in
-addition to recordings started in **Settings > Data storage**. The capture viewer shows the
-spectrum in acceleration, velocity (derived from the g² spectrum) or envelope
-(computed from the waveform), the waveform with RMS, peak, crest factor and kurtosis,
-or a waterfall of recent spectra. Frequencies are labelled in Hz with CPM underneath,
-the strongest peaks are listed with their multiple of running speed, and each
-capture downloads as CSV. On IRIV Edge AI installs the AI's finding for the channel
-appears above the history. **Save the live spectrum as this
-channel's baseline** sets the reference for the Baseline health agent.
-
-![Machine history: a clicked moment on the trend opens the spectrum saved closest to it](docs/images/machine-history.png)
-
-### 4. Review health and export results
-
-Open **Health Agents** for advisory findings. Use **History Explorer** for trends
-and CSV exports, or **Reports and backups** to select a UTC day, download a report,
-and create an integrity-checked database backup. Administrator access is required
-for changes and acknowledgments; viewer accounts can inspect permitted read-only views.
-
-### The six monitoring checks
-
-| Check | What it reports |
-| --- | --- |
-| Connectivity | MQTT connection failures |
-| Sensor | Missing or stale measurements after three expected publishing intervals |
-| Data quality | Missing measurement settings and invalid array lengths |
-| Storage | Less than 10% free disk space |
-| Baseline | Changes of at least 50% against a compatible saved baseline |
-| Health | An overall healthy result when no issues are found |
-
-These are deterministic checks, not independent AI processes. Daily reports,
-backups, and retention run in a separate maintenance task. `AGENTS.md` contains
-development instructions for coding assistants; it does not start runtime agents.
-
-## Run locally
-
-### Preview the public demo locally
-
-The browser-only demo needs no Python packages or Docker:
-
-```bash
-python -m http.server 8080 --directory demo --bind 127.0.0.1
-```
-
-Open **http://127.0.0.1:8080**. Source files are in `demo/`. The
-[demo workflow](.github/workflows/demo.yml) renders the actual application in an
-isolated temporary environment, checks the generated views and Chrome interactions,
-then publishes only the static `demo/` folder to GitHub Pages. Application layout
-and stylesheet changes trigger regeneration so the demo follows the real UI.
-Repository Pages settings must use **GitHub Actions** as the publishing source.
-
-To regenerate the preview locally, install the application dependencies and
-Node.js 24, ensure Chrome is installed, then run `node scripts/build-demo.mjs`.
-Set `DEMO_PYTHON` to your virtual environment's Python executable if necessary.
-The exporter creates synthetic data in a temporary directory and starts no MQTT,
-Modbus, OPC UA, or maintenance workers. See [demo maintenance notes](demo/README.md).
-
-### Run the full application
-
-For development without Docker, install Python 3.14. On Linux:
-
-```bash
-python3.14 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python app.py
-```
-
-On Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python app.py
-```
-
-Open http://127.0.0.1:8050. On Linux, use `.venv/bin/python` instead.
-The application uses Waitress with one process and eight HTTP threads.
-Configure the broker in Settings > MQTT, then restart the application to apply
-broker changes. Restart Application restarts Python; it does not reboot the host.
-
-## Docker
-
-```powershell
-Copy-Item .env.example .env
-# Edit .env and set a strong VDS_ADMIN_PASSWORD before the next command.
-docker compose --env-file .env -f docker/compose.yaml up -d --build
-```
-
-Docker files live in `docker/`. Run Compose from the repository root and pass
-`--env-file .env` so it reads the root `.env`; running `python app.py` directly does not load it.
-The image runs as UID 10001 with dropped capabilities. Compose uses a read-only
-root filesystem, a temporary /tmp, and a persistent named volume at /data.
-SQLite, backups, reports, and broker configuration survive container replacement.
-The dashboard is published on 127.0.0.1:8050 by default. `/healthz` checks HTTP
-process liveness and does not claim that sensors or the broker are connected.
-
-This stack uses SQLite, not PostgreSQL. It does not start an MQTT broker.
-Configure the address of your existing broker; `localhost` inside the container
-means the container itself. Docker Desktop can reach a host broker using
-`host.docker.internal` when the host broker permits that connection.
-
-Industrial protocol ports are not published by the default Compose file. For a
-trusted OT network deployment, explicitly configure `VDS_PROTOCOL_HOST`, an
-unprivileged Modbus port such as 1502, and the required port mappings. OPC UA and
-Modbus endpoints are separate from the dashboard login. No privileged container
-or host networking is needed for the default dashboard deployment. Host time
-administration is intentionally unavailable inside the restricted container.
-
-Stop the stack with `docker compose --env-file .env -f docker/compose.yaml down`. Do not add `--volumes` unless you
-intend to remove its persisted data.
-
-## Cytron IRIV Edge AI
-
-The [iriv-edge](iriv-edge/README.md) folder installs the dashboard on a Cytron IRIV
-Edge AI (Raspberry Pi CM5) and adds a self-learning AI advisor. The AI is only available
-on IRIV Edge AI installs; other installs show no AI controls. Try it on any computer with
-`python iriv-edge/demo/run_demo.py`. It learns each
-channel's normal spectrum, waveform and readings, then reports changes and matches
-them to a fault symptom library with bearing defect frequencies. Its findings appear
-in the health panel and never drive outputs.
-
-## Commission a device
-
-1. Configure VDS publishing to your MQTT broker and subscribe through Settings > MQTT.
-2. Open Asset registry. Map each gateway/channel to site, machine, bearing location,
-   and measurement direction. Enter the device's expected publishing interval.
-3. Check Health Agents and the measurement cards for timestamp, metadata, and
-   array-length issues before using the data for alarms or comparisons.
-4. Open Alarm management. Select a metric, review its published unit, filter, and
-   detection method, then set machine-specific warning/alert thresholds,
-   hysteresis, and consecutive-capture persistence. Initial thresholds are examples.
-5. Start a recording to retain raw waveforms and spectra. Scalar history is
-   continuous, whether or not a recording job is active.
-6. Open Machine history to save a baseline, click any moment of the trend to open
-   its spectrum and waveform, and view a waterfall of recent spectra.
-
-Freshness is based on three missed publishing intervals, not the browser refresh
-rate. The default interval is 60 seconds, so the default stale threshold is 180
-seconds. Asset settings describe the VDS; they do not change device firmware.
-
-## Measurement integrity
-
-The parser follows the MQTT content documented in the
+The VDS publishes to your broker. The dashboard checks every message, keeps its
+measurement settings (unit, filter, detection, sensor), and stores it in SQLite.
+Message parsing follows the
 [VDS130 setup manual, page 10](https://wilcoxon.com/wp-content/uploads/2026/03/VDS130-setup-instructions-97047A.pdf).
-It preserves metric units, detection, and filters; sensor type/sensitivity; capture
-and receipt timestamps; and waveform/spectrum acquisition settings when supplied.
-`StandardDeviation` is read from the device, rather than replaced by a different
-calculation. Missing metrics remain missing, rather than becoming zero.
+Missing readings stay missing rather than becoming zero, and invalid array lengths
+are reported, not plotted.
 
-Waveform length is checked against duration x sampling frequency when supplied;
-spectra require lines + 1 samples including the DC bin. Invalid lengths produce
-quality findings and are not presented with fabricated plot axes. The test
-fixtures contain small synthetic examples shaped after the documented schema;
-they are not recordings from the user's hardware.
+<p align="center"><img src="docs/images/wilcoxon-vds130.jpg" alt="Wilcoxon VDS130" width="320"></p>
 
-Duplicate captures do not advance alarm persistence. Older captures may enter
-history but do not replace newer live metric values. Alarm state and transitions
-are durable. A unit/filter/detection change puts a rule into an unknown state until
-reviewed. Acknowledgment records the user and time; it does not clear a fault.
+## Data and storage
 
-History plots separate incompatible measurement settings, and CSV/Excel exports
-include context. Legacy rows without context remain explicitly unknown. Baseline
-spectrum comparisons require matching acquisition settings. The published power
-spectrum is plotted in device units without an assumed amplitude conversion.
-The MQTT schema may omit the window function; verify unchanged VDS settings when
-that field is unavailable. RPM order plots use the RPM attached to the capture;
-they are not tachometer-resampled order tracking.
+- **Database**: SQLite in WAL mode: one crash-safe file, no database server to run.
+  **Settings > Database & files** shows the file, its tables and sizes, what is kept
+  for how long, and (on IRIV) where the AI keeps its files.
 
-Health Agents provide connectivity, data-quality, freshness, storage, and
-baseline-change findings. Baseline changes of 50% or more are advisory and include
-reference/current values. Reports group measurements by their settings. None of
-these features classifies mechanical faults or issues machine commands.
+  ![Settings, Database and files: the SQLite file, tables, retention and folders](docs/images/settings-database.png)
+- **Backups**: a verified copy of the database every day in `backups/`, plus manual
+  backups from **Reports and backups**. Copy them off the device too.
+- **Retention**: readings, recordings and acknowledged alarms are kept until you set
+  `VDS_TREND_RETENTION_DAYS`, `VDS_RAW_RETENTION_DAYS` or `VDS_ALARM_RETENTION_DAYS`.
+  Data covered by an active recording is never pruned.
+- **Restore**: stop the dashboard, keep the current database, place a verified backup
+  at `<VDS_DATA_DIR>/vibration_trends.db` without old `-wal`/`-shm` files, and start it.
+- **Docker**: data lives in the named volume at `/data`. `docker compose ... down`
+  keeps it; do not add `--volumes` unless you mean to delete it.
 
-## Storage, backup, and retention
+## Settings reference
 
-Scheduled maintenance runs once per UTC day, starting on application launch:
-
-- Create a SQLite backup and check its integrity before enabling any pruning.
-- Generate the previous UTC day's Markdown report under `reports/`.
-- Apply configured retention; 0 means keep all data.
-
-Backups live under `backups/` in VDS_DATA_DIR. The Reports and backups page also
-creates a verified manual backup and provides on-demand reports, including today.
-Download backups to separate storage; local copies do not protect against disk loss.
-Automatic backups/reports themselves are retained until archived by the operator.
-
-Raw/scalar pruning preserves data covered by active recording jobs. Alarm retention
-removes only acknowledged events. Retention does not reinterpret legacy local
-timestamps. New context includes epoch capture times and UTC report/export fields.
-A future migration of legacy timestamps requires knowing their original timezone.
-
-To restore, stop the application, preserve the current database and its sidecars,
-then place a verified backup at VDS_DATA_DIR/vibration_trends.db with ownership
-that permits the service user to write. Do not combine a restored database with
-old -wal/-shm sidecars. Restart and verify channels, rules, and recording jobs.
-
-The upgrade adds tables and context columns without dropping historical tables.
-Plain legacy pickled configuration is restricted to non-executable objects and
-migrated to JSON. Old dashboard alarm thresholds remain in configuration but must
-be re-entered in Alarm management with verified measurement settings.
-
-## Environment and access
+Set these in `.env` (Docker) or the environment.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| VDS_HOST / VDS_PORT | 127.0.0.1 / 8050 | Native HTTP bind address/port |
-| VDS_ADMIN_USER / VDS_ADMIN_PASSWORD | admin / empty | Password is required for remote access |
-| VDS_VIEWER_USER / VDS_VIEWER_PASSWORD | viewer / empty | Optional read-only account |
-| VDS_PROTOCOL_HOST | 127.0.0.1 | Industrial protocol interface |
-| VDS_MODBUS_PORT | 502 | Set 1502 for an unprivileged deployment |
-| VDS_DATA_DIR | device_data beside app.py | Database, backups, reports |
-| VDS_CONFIG_DIR | directory containing app.py | MQTT/Modbus configuration |
-| VDS_TREND_RETENTION_DAYS | 0 | Scalar history retention |
-| VDS_RAW_RETENTION_DAYS | 0 | Waveform/spectrum retention |
-| VDS_ALARM_RETENTION_DAYS | 0 | Acknowledged alarm retention |
-| VDS_SNAPSHOT_INTERVAL_S | 1800 | Seconds between saved spectra and waveforms per channel for Machine history; 0 is off |
-| VDS_SNAPSHOT_RETENTION_DAYS | 90 | Days of saved spectra and waveforms kept |
-| VDS_EDGE_AI | 0 | 1 on IRIV Edge AI installs: AI settings, spectrum fault lines and learning samples |
-| VDS_LEARNING_INTERVAL_S | 600 | Seconds between AI learning samples per channel of AI-enabled VDS units; 0 is off |
-| VDS_LEARNING_RETENTION_HOURS | 6 | Hours each channel keeps learning samples |
-| VDS_BIND_ADDRESS | 127.0.0.1 | Compose host publication address |
+| `VDS_ADMIN_USER` / `VDS_ADMIN_PASSWORD` | admin / generated | Administrator login (required for remote access) |
+| `VDS_VIEWER_USER` / `VDS_VIEWER_PASSWORD` | viewer / empty | Optional read-only login |
+| `VDS_HOST` / `VDS_PORT` | 127.0.0.1 / 8050 | Address and port of the dashboard |
+| `VDS_BIND_ADDRESS` | 127.0.0.1 | Address Docker publishes the dashboard on |
+| `VDS_DEVICE_APPROVAL` | 1 | A new VDS waits on the VDS130 page until allowed; 0 accepts every unit |
+| `VDS_DATA_DIR` | device_data | Database, backups and reports |
+| `VDS_CONFIG_DIR` | app folder | MQTT and Modbus configuration |
+| `VDS_SNAPSHOT_INTERVAL_S` / `VDS_SNAPSHOT_RETENTION_DAYS` | 1800 / 90 | Saved spectra and waveforms for the analysis history |
+| `VDS_TREND_RETENTION_DAYS` | 0 (keep) | Overall readings |
+| `VDS_RAW_RETENTION_DAYS` | 0 (keep) | Recorded waveforms and spectra |
+| `VDS_ALARM_RETENTION_DAYS` | 0 (keep) | Acknowledged alarm events |
+| `VDS_PROTOCOL_HOST` / `VDS_MODBUS_PORT` | 127.0.0.1 / 502 | Modbus and OPC UA interface; use 1502 unprivileged |
+| `VDS_EDGE_AI` | 0 | 1 on IRIV Edge AI: AI setup, findings and learning samples |
+| `VDS_LEARNING_INTERVAL_S` / `VDS_LEARNING_RETENTION_HOURS` | 600 / 6 | AI learning samples per channel |
+| `VDS_START_MODE` | set by the launcher | `build` or `image`, so `update.sh` restarts the same way |
 
-Use HTTPS through a reverse proxy for remote access: HTTP Basic credentials need
-encrypted transport. Viewer writes are blocked on the server even if controls
-remain visible. OPC UA currently uses anonymous access; bind industrial listeners
-to a trusted network. Dashboard credentials do not protect these protocols.
-Run one application process, not multiple WSGI workers with separate device state.
+**Access and safety**
 
-Modbus uses big-endian IEEE-754 float32, two holding registers per mapping. In
-addition to metrics/RPM, choose Data Age (seconds; -1 is unknown), Data Valid (0/1),
-and Communication Status (0/1) for a channel. Always inspect quality alongside
-numeric values; a numeric fallback of zero is not proof of a valid measurement.
-OPC UA adds read-only DataAgeSeconds, DataValid, CommunicationStatus, and per-metric
-Settings JSON nodes under each channel. IDs are stable within the registered
-namespace. These gateways remain monitoring interfaces, not machinery protection.
+- Viewers can look but cannot change settings, delete data, allow units or give AI
+  feedback; the server enforces this.
+- Use HTTPS through a reverse proxy for remote access.
+- OPC UA is anonymous and Modbus has no login: bind them to a trusted OT network
+  only. They are monitoring interfaces, not machine protection.
+- Modbus values are big-endian IEEE-754 float32, two holding registers each.
+- The AI and health checks are advisory and never issue machine commands.
 
-## Development and replay
+## Development
 
-```powershell
-.venv\Scripts\python -m unittest discover -s tests -v
-.venv\Scripts\python -m compileall -q app.py replay.py vds_dashboard
-.venv\Scripts\python replay.py tests/fixtures/vds130_messages.json --data-dir .review/replay --rebase-time --record-raw
+```bash
+python -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m unittest discover -s tests -v        # no broker, PLC or sensor needed
+.venv/bin/python app.py                                   # http://127.0.0.1:8050
+python -m http.server 8080 --directory demo               # the static public demo
 ```
 
-Replay refuses an existing database and starts no hardware services. Captured
-JSON can replace the synthetic fixture for commissioning tests. Keep credentials
-out of captures. Tests use temporary databases and mock protocol listeners; they
-do not connect to physical sensors or PLCs. CI runs tests and builds the image.
+- Code: `app.py` (services and Home), `vds_dashboard/` (pages, database, analysis,
+  AI views), `iriv-edge/` (AI advisor, neural model, IRIV installer), `docker/`, `scripts/`.
+- `replay.py` replays captured MQTT messages into a fresh database for commissioning tests.
+- Every push to `main` runs the [checks](.github/workflows/checks.yml) on Linux AMD64 and
+  ARM64, builds and tests the container, publishes the container package, and
+  rebuilds the [public demo](.github/workflows/demo.yml). A `v*` tag publishes a release.
+- `AGENTS.md` holds the rules for coding assistants working on this repository.
+- PyModbus stays pinned to 2.5.3 until a tested v3 migration exists.
 
-## GitHub code checks and downloads
-
-[Dashboard checks](https://github.com/dineshpalsingh1989/VDS-to-Dashboard/actions/workflows/checks.yml)
-runs on pushes to `main`, pull requests, version tags, and manual requests:
-
-- Check dependency compatibility, Python syntax, and undefined names.
-- Run the test suite on Linux AMD64 and ARM64 runners with Python 3.14.
-- Check Linux shell syntax, build the production image, and run an isolated
-  non-root container test for startup, HTTP routes, and verified backups.
-- Validate both Compose configurations.
-- Publish AMD64/ARM64 container packages only after checks pass, outside pull requests.
-- On a `v*` tag, publish a Linux source bundle and SHA-256 checksums as a GitHub Release.
-
-The published AMD64 and ARM64 images have been verified to allow anonymous pulls.
-Maintainers publishing a fork should check its package visibility separately;
-GitHub can create new packages as private. Checks exercise software behavior;
-commissioning against real VDS hardware is still required for a new installation.
-
-Modules live in `vds_dashboard/`: vds.py normalizes measurements; historian.py persists context, rules,
-backups and retention; diagnostics.py builds plots/exports; workspace_views.py
-contains the new pages; monitoring.py provides advisory agents; app.py integrates
-hardware services and the original dashboard.
-
-PyModbus is pinned to 2.5.3 until a separately tested v3 API migration is completed.
-Licensed under MIT; see LICENSE.
-
-### Diagnostic exploration
-
-- View time waveforms and spectra together with capture time, sampling rate, frequency resolution, FFT window, and RPM source.
-- Choose **Live / latest** or one of the latest 100 recorded timestamps. Historical spectra compare against the saved channel baseline when acquisition settings match. The baseline button always captures the live spectrum.
-- Click a spectrum point to inspect frequency, amplitude, and order. The peak table ranks up to ten local maxima, excluding DC and endpoints, using original spectrum bins without interpolation.
-- Enable the order axis to use dashboard RPM automatically in the live view. Recorded captures use their own RPM. If RPM is missing, invalid, or incorrect, enter a positive **Manual RPM** for the spectrum and baseline display. This is a frequency-axis conversion, not speed-synchronised order tracking. The waterfall remains in Hz.
-- Review a responsive dashboard with wider channel cards, clearer measurement labels, consistent controls, and acquisition detail panels.
-
-Recorded values are unchanged. Waveforms and spectra are paired only at identical stored timestamps; missing data is shown as unavailable. Legacy recordings may lack RPM, FFT window, or UTC capture metadata; these remain unknown rather than being inferred from live readings. Spectrum amplitudes remain in published device units, and waveform amplitudes remain in sensor units.
-
-The public demo includes the same diagnostic exploration with synthetic captures, manual RPM, peak inspection, and baseline comparisons. All configuration and service actions remain disabled. See [demo instructions](demo/README.md).
+Licensed under MIT; see [LICENSE](LICENSE).

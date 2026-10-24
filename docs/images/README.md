@@ -1,19 +1,22 @@
 # Documentation screenshots
 
-These PNG files are browser captures of the actual application with synthetic
-measurements for a fictional cooling-water pump. Device identifiers and the
-documentation IP address are illustrative. No production sensor data or broker
-credentials are included.
+These PNG files are browser captures of the actual application running the built-in
+IRIV Edge AI demo (`python iriv-edge/demo/run_demo.py`), which simulates a cooling pump,
+a cooling-tower fan and a conveyor gearbox with synthetic data. Device identifiers are
+illustrative. No production sensor data or broker credentials are included, and the
+plotted values and thresholds are not machine-health recommendations.
 
 | File | View |
 | --- | --- |
-| dashboard.png | Four channel cards, RPM, measurement metadata, and a trend |
-| asset-registry.png | Machine, bearing, direction, and publishing-interval configuration |
-| alarm-management.png | Measurement-aware rule configuration and a warning event |
-| machine-history.png | Machine history: multi-reading trend with saved-spectrum ticks; a clicked moment opens the nearest spectrum with Hz/CPM axis and peaks |
-
-The demonstration uses 1440 RPM and synthetic spectral components. The plotted
-values and alarm thresholds do not constitute machine-health recommendations.
+| home.png | Home: overview, a new VDS130 waiting for approval, channel cards with AI status, setup and bell |
+| mobile.png | Home on a phone |
+| vds130.png | VDS130 page: a unit waiting for approval and every unit's status |
+| analysis-spectrum.png | Analysis window: live spectrum with bearing defect lines, harmonics and named peaks |
+| analysis-waveform.png | Analysis window: waveform zoomed to five turns, turn markers and impacts named as BPFO |
+| ai-explanation.png | The AI's plain-language explanation of a finding, with normal against now |
+| ai-setup.png | AI setup: ISO class from power and foundation, sensor position drawing |
+| settings-database.png | Settings, Database & files |
+| alarm-management.png | Measurement-aware alarm rule and a warning event |
 
 ## Hardware photo
 
