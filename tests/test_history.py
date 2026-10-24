@@ -276,6 +276,28 @@ class HistoryPageTests(unittest.TestCase):
             {"id": "diag-bearing-result", "property": "children", "value": None}])
         self.assertIn("No saved spectrum", json.dumps(body["diag-plot"]["figure"]))
 
+    def test_measurements_tab_lists_saved_spectra_and_opens_one(self):
+        body = self.request("diag_measurements", [self.channel(), {"id": "diag-time", "property": "data", "value": None}],
+                            viewer=True)
+        text = json.dumps(body)
+        self.assertIn("6 saved spectra", text)
+        self.assertEqual(text.count('"type": "diag-meas"'), 6)
+        pick = self.request("diag_measure_pick", [[{"id": {"type": "diag-meas", "ms": self.first_ms},
+                                                    "property": "n_clicks", "value": 1}]],
+                            changed=[json.dumps({"ms": self.first_ms, "type": "diag-meas"}, separators=(",", ":"))
+                                     + ".n_clicks"])
+        self.assertEqual(pick["diag-time"]["data"], self.first_ms)
+        tabs = self.request("diag_tree_tab", [{"id": "diag-tree-tab", "property": "value", "value": "measurements"}])
+        self.assertEqual(tabs["diag-tree-assets"]["style"], {"display": "none"})
+
+    def test_channel_header_shows_alarm_state_and_signed_in_user(self):
+        with closing(app.get_db_connection()) as conn, conn:
+            conn.execute("INSERT INTO alarm_state VALUES (?,?,?)", ("GW1", "1", json.dumps({"severity": "warning"})))
+        body = self.request("diag_overview", [self.channel(), {"id": "diag-metrics", "property": "value", "value": []}])
+        self.assertIn("Warning", json.dumps(body["diag-status"]))
+        user = self.request("sidebar_user", [{"id": "url", "property": "pathname", "value": "/"}], viewer=True)
+        self.assertIn("Viewer", json.dumps(user))
+
     def test_baseline_button_still_saves_the_live_spectrum(self):
         app.data_storage["GW1"] = {"channels": {"1": {"spectrum_context": {"bandwidth": 1000, "lines": 800},
                                                        "spectrum_data": [1e-4] * 801}}}

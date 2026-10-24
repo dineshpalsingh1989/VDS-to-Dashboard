@@ -26,7 +26,7 @@ from .signals import envelope_spectrum, velocity_from_acceleration, waveform_sta
 from .spectrum_view import add_cpm_axis, add_harmonic_markers, spectrum_figure
 from .vds import freshness, spectrum_xy
 
-READ_CALLBACKS = {"diag_tree", "diag_init", "diag_tree_pick", "diag_axis_options", "diag_select_channel",
+READ_CALLBACKS = {"diag_tree_tab", "diag_measurements", "diag_measure_pick", "diag_tree", "diag_init", "diag_tree_pick", "diag_axis_options", "diag_select_channel",
                   "diag_overview", "diag_cell_pick", "diag_pick_time", "diag_trend", "diag_view_capture",
                   "diag_bearing_load", "diag_download"}
 # (metric name in the historian, chip label, colour)
@@ -63,16 +63,24 @@ def page():
         dcc.Store(id="diag-gateway"), dcc.Store(id="diag-channel"), dcc.Store(id="diag-time"),
         dbc.Row([
             dbc.Col(html.Div([
-                dbc.Input(id="diag-search", placeholder="Search machines and channels", size="sm", debounce=True,
-                          className="mb-2", type="search"),
-                html.Div(id="diag-tree", className="mh-tree"),
+                button_radio("diag-tree-tab", [{"label": "Assets", "value": "assets"},
+                                               {"label": "Measurements", "value": "measurements"}], "assets",
+                             "btn-tabs panel-tabs"),
+                html.Div([
+                    dbc.Input(id="diag-search", placeholder="Search", size="sm", debounce=True,
+                              className="my-2", type="search"),
+                    html.Div(id="diag-tree", className="mh-tree"),
+                ], id="diag-tree-assets"),
+                html.Div(id="diag-measurements", className="mh-measurements", style={"display": "none"}),
             ], className="mh-panel"), lg=3),
             dbc.Col([
-                html.Div(id="diag-overall", className="mh-card mh-overall"),
                 dbc.Row([
                     dbc.Col(button_radio("diag-axis", [], None, "btn-tabs axis-tabs"), width="auto"),
                     dbc.Col(html.Div(id="diag-channel-name", className="mh-channel-name"), className="text-truncate"),
+                    dbc.Col(html.Div(id="diag-status"), width="auto"),
                 ], className="g-2 align-items-center mb-2"),
+                html.Details([html.Summary("Overall values, all channels"),
+                              html.Div(id="diag-overall", className="mt-2")], className="mh-card mh-overall"),
                 html.Div(id="diag-ai"),
                 html.Div([
                     dbc.Row([
@@ -87,10 +95,8 @@ def page():
                                          options=[{"label": label, "value": key} for key, label, _d in RANGES]),
                         ], lg=5, className="d-flex gap-2 align-items-center justify-content-lg-end"),
                     ], className="g-2 align-items-center"),
-                    dcc.Graph(id="diag-trend", config={"displaylogo": False}, style={"height": "390px"}),
-                    html.Small("Click anywhere on the history to open the spectrum and waveform saved closest to "
-                               "that moment. Ticks under the chart mark saved spectra; drag the slider to zoom.",
-                               className="text-muted"),
+                    dcc.Graph(id="diag-trend", config={"displaylogo": False}, style={"height": "220px"}),
+
                 ], className="mh-card"),
                 html.Div([
                     dbc.InputGroup([
@@ -138,7 +144,7 @@ def page():
                         html.Datalist(id="diag-bearing-list"),
                         html.Div(id="diag-bearing-result", className="small mt-1"),
                     ], className="mh-bearing-edit"),
-                    dcc.Graph(id="diag-plot", config={"displaylogo": False}, style={"height": "470px"}),
+                    dcc.Graph(id="diag-plot", config={"displaylogo": False}, style={"height": "300px"}),
                     html.Div(id="diag-peaks"),
                 ], className="mh-card"),
                 dbc.Button("Save the live spectrum as this channel's baseline", id="baseline-save", color="primary",
@@ -151,7 +157,7 @@ def page():
 
 
 # ---------------------------------------------------------------- figures
-def empty_figure(text, height=360):
+def empty_figure(text, height=300):
     figure = go.Figure().update_layout(template="plotly_white", height=height, margin=dict(l=40, r=20, t=30, b=30),
                                        xaxis=dict(visible=False), yaxis=dict(visible=False))
     figure.add_annotation(text=text, showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper",
@@ -164,7 +170,7 @@ def trend_figure(series, captures, selected_ms, logy=False):
     figure = go.Figure()
     names = [name for name in series if series[name]["x"]]
     if not names:
-        return empty_figure("No history yet for this channel and time range.", 390)
+        return empty_figure("No history yet for this channel and time range.", 300)
     left, right = (len(names) + 1) // 2, len(names) // 2
     domain = [AXIS_STEP * (left - 1), 1 - AXIS_STEP * max(right - 1, 0)]
     layout = {"xaxis": dict(domain=domain, type="date", showspikes=True, spikemode="across", spikethickness=1,
@@ -198,7 +204,7 @@ def trend_figure(series, captures, selected_ms, logy=False):
         figure.add_vline(x=moment, line=dict(color="#2a7fd4", width=1.5, dash="dash"))
         figure.add_annotation(x=moment, y=1, yref="paper", text=f"▼ {moment:%d/%m/%Y %H:%M:%S}", showarrow=False,
                               yanchor="bottom", font=dict(size=11, color="#2a7fd4"))
-    figure.update_layout(template="plotly_white", height=390, margin=dict(l=50, r=50, t=34, b=20),
+    figure.update_layout(template="plotly_white", height=220, margin=dict(l=50, r=50, t=26, b=10),
                          hovermode="x unified", showlegend=False, clickmode="event", **layout)
     return figure
 
@@ -255,6 +261,42 @@ def register(app, get_connection, data_folder):
                                  "site": asset.get("site", ""), "fresh": freshness(state)["status"] == "fresh"})
             result.append({"gid": gid, "channels": channels})
         return result
+
+    @app.callback([Output("diag-tree-assets", "style"), Output("diag-measurements", "style")],
+                  Input("diag-tree-tab", "value"))
+    def diag_tree_tab(tab):
+        hidden = {"display": "none"}
+        return (hidden, {}) if tab == "measurements" else ({}, hidden)
+
+    @app.callback(Output("diag-measurements", "children"), [Input("diag-channel", "data"), Input("diag-time", "data")])
+    def diag_measurements(channel, selected_ms):
+        """Every saved spectrum for the channel, newest first; clicking one opens it."""
+        if not channel:
+            return html.Small("Choose a channel.", className="text-muted")
+        gid, ch = json.loads(channel)
+        with closing(get_connection()) as conn:
+            times = historian.capture_times(conn, gid, ch, 0, int(time.time() * 1000) + 86_400_000)[-300:][::-1]
+        if not times:
+            return html.Small("No saved spectra for this channel yet.", className="text-muted mt-2 d-block")
+        nearest = min(times, key=lambda ms: abs(ms - selected_ms)) if selected_ms else times[0]
+        items, day = [html.Div(f"CH{ch} · {len(times)} saved spectra", className="meas-head")], None
+        for ms in times:
+            moment = datetime.fromtimestamp(ms / 1000)
+            if moment.date() != day:
+                day = moment.date()
+                items.append(html.Div(f"{moment:%d %b %Y}", className="meas-day"))
+            items.append(html.Button([html.I(className="fas fa-chart-bar me-2"), f"{moment:%H:%M:%S}"],
+                                     id={"type": "diag-meas", "ms": ms}, n_clicks=0,
+                                     className="tree-leaf" + (" active" if ms == nearest else "")))
+        return items
+
+    @app.callback(Output("diag-time", "data", allow_duplicate=True),
+                  Input({"type": "diag-meas", "ms": ALL}, "n_clicks"), prevent_initial_call=True)
+    def diag_measure_pick(clicks):
+        trigger = ctx.triggered_id
+        if not isinstance(trigger, dict) or not any(clicks or []):
+            return no_update
+        return int(trigger["ms"])
 
     @app.callback(Output("diag-tree", "children"), [Input("diag-search", "value"), Input("diag-channel", "data")])
     def diag_tree(search, channel):
@@ -317,14 +359,15 @@ def register(app, get_connection, data_folder):
         return json.dumps([gid, ch]) if gid and ch else None
 
     @app.callback([Output("diag-breadcrumb", "children"), Output("diag-channel-name", "children"),
-                   Output("diag-overall", "children")],
+                   Output("diag-overall", "children"), Output("diag-status", "children")],
                   [Input("diag-channel", "data"), Input("diag-metrics", "value")])
     def diag_overview(channel, metrics):
         if not channel:
-            return None, None, html.Small("Waiting for the first VDS message.", className="text-muted")
+            return None, None, html.Small("Waiting for the first VDS message.", className="text-muted"), None
         gid, ch = json.loads(channel)
         with closing(get_connection()) as conn:
             asset = historian.asset_settings(conn, gid, ch)
+            severity = historian.get_json(conn, "alarm_state", "state", gid, ch, {}).get("severity") or "not set"
             item = next((g for g in gateways(conn) if g["gid"] == gid), {"channels": []})
             latest = {(c, m): (v, json.loads(ctx_ or "{}").get("unit", "")) for c, m, v, ctx_ in conn.execute(
                 "SELECT channel, metric_name, value, context FROM trends_latest WHERE gateway_id=?", (gid,))}
@@ -352,7 +395,10 @@ def register(app, get_connection, data_folder):
                                                           for c in channels]))
         table = dbc.Table([head, html.Tbody(rows)], size="sm", borderless=True, className="mb-0 overall-table") if rows \
             else html.Small("No overall readings yet.", className="text-muted")
-        return breadcrumb, html.Span([html.Strong(f"{gid} · CH{ch}"), html.Span(f"  {name}", className="text-muted")]), table
+        tone = {"alert": "status-alert", "warning": "status-warning", "normal": "status-fresh"}.get(severity, "status-unknown")
+        status = html.Span(["Alarm: ", severity.capitalize()], className=f"status-pill {tone}", title="Alarm state of this channel")
+        return (breadcrumb, html.Span([html.Strong(f"{gid} · CH{ch}"), html.Span(f"  {name}", className="text-muted")]),
+                table, status)
 
     @app.callback([Output("diag-axis", "value", allow_duplicate=True), Output("diag-metrics", "value")],
                   Input({"type": "diag-cell", "ch": ALL, "metric": ALL}, "n_clicks"), State("diag-metrics", "value"),
@@ -382,7 +428,7 @@ def register(app, get_connection, data_folder):
                    Input("diag-time", "data"), Input("diag-trend-tools", "value")])
     def diag_trend(channel, metrics, span, selected_ms, tools):
         if not channel:
-            return empty_figure("Choose a machine and channel.", 390)
+            return empty_figure("Choose a machine and channel.", 300)
         gid, ch = json.loads(channel)
         days = dict((key, d) for key, _l, d in RANGES).get(span, 7)
         metrics = [m for m in (metrics or []) if m in COLOURS]
@@ -390,7 +436,7 @@ def register(app, get_connection, data_folder):
             newest = conn.execute("SELECT MAX(timestamp) FROM trends WHERE gateway_id=? AND channel=?",
                                   (gid, ch)).fetchone()[0]
             if not newest:
-                return empty_figure("No history yet for this channel.", 390)
+                return empty_figure("No history yet for this channel.", 300)
             end = datetime.fromisoformat(str(newest))
             start = max(end.timestamp() - days * 86400, 0)
             series = {}
@@ -494,7 +540,7 @@ def register(app, get_connection, data_folder):
             add_cpm_axis(figure, top)
             figure.update_xaxes(title="f [Hz + CPM]")
         figure.update_yaxes(title=ylabel)
-        figure.update_layout(title=None, margin=dict(l=60, r=20, t=20, b=60), height=470)
+        figure.update_layout(title=None, margin=dict(l=60, r=20, t=16, b=50), height=300)
         return figure, (rows if "peaks" in tools else []), capture, info, rpm, where
 
     @app.callback([Output("diag-plot", "figure"), Output("diag-capture-info", "children"), Output("diag-rms", "children"),
@@ -505,9 +551,9 @@ def register(app, get_connection, data_folder):
                    Input("diag-speed-unit", "value"), Input("diag-bearing-result", "children")])
     def diag_view_capture(channel, selected_ms, view, quantity, tools, speed, unit, _saved):
         if not channel:
-            return empty_figure("Choose a machine and channel.", 470), None, None, None, None, None, "auto"
+            return empty_figure("Choose a machine and channel.", 360), None, None, None, None, None, "auto"
         gid, ch = json.loads(channel)
-        ai_box = ai_views.finding_box(data_folder, gid, ch) if historian.edge_ai_enabled() else None
+        ai_box = ai_views.finding_box(data_folder, gid, ch, compact=True) if historian.edge_ai_enabled() else None
         with closing(get_connection()) as conn:
             info, _settings = ai_views.machine_info(conn, gid, ch)
             header = bearing_header(info.get("bearing_orders"))
@@ -515,7 +561,7 @@ def register(app, get_connection, data_folder):
                 if view == "waterfall":
                     items = historian.recent_spectra(conn, gid, ch, selected_ms or int(time.time() * 1000) + 86_400_000)
                     figure = waterfall_figure(items)
-                    figure.update_layout(height=470)
+                    figure.update_layout(height=300)
                     note = f"Last {len(items)} saved spectra" + (" up to the moment you clicked." if selected_ms else ".")
                     return figure, html.Span(note, className="text-muted"), None, None, header, ai_box, "auto"
                 if view == "waveform":
@@ -525,7 +571,7 @@ def register(app, get_connection, data_folder):
                     values, fs = capture["values"], capture["sampling_freq"]
                     figure = go.Figure(go.Scatter(x=np.arange(values.size) / fs, y=values, mode="lines",
                                                   line=dict(color="#1f77b4", width=1)))
-                    figure.update_layout(template="plotly_white", height=470, margin=dict(l=60, r=20, t=20, b=50),
+                    figure.update_layout(template="plotly_white", height=300, margin=dict(l=60, r=20, t=16, b=45),
                                          xaxis_title="t [s]", yaxis_title="Waveform (sensor units)")
                     stats = waveform_stats(values)
                     rms = html.Span([html.Span("RMS ", className="text-muted"), html.Strong(f"{stats['rms']:.4g}"),
@@ -547,7 +593,7 @@ def register(app, get_connection, data_folder):
                 return (figure, capture_pill(capture, selected_ms), rms, ai_views.peak_table(rows), header, ai_box,
                         placeholder)
             except ValueError as error:
-                return empty_figure(str(error), 470), None, None, None, header, ai_box, "auto"
+                return empty_figure(str(error), 360), None, None, None, header, ai_box, "auto"
 
     @app.callback(Output("diag-file", "data"), Input("diag-download-btn", "n_clicks"),
                   [State("diag-channel", "data"), State("diag-time", "data"), State("diag-view", "value")],

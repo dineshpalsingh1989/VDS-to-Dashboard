@@ -219,8 +219,10 @@ def spectrum_controls():
     ], id="modal-controls", style={"display": "none"})
 
 
-def finding_box(data_folder, gid, ch):
-    """The AI's current finding for one sensor, with feedback buttons."""
+def finding_box(data_folder, gid, ch, compact=False):
+    """The AI's current finding for one sensor, with feedback buttons.
+
+    compact gives one line per finding (full text on hover) for one-screen pages."""
     report = read_json(os.path.join(data_folder, "ai", "findings.json"), {})
     items = [f for f in report.get("findings", []) if f.get("gateway_id") == gid and f.get("channel") == ch]
     if not items:
@@ -232,7 +234,8 @@ def finding_box(data_folder, gid, ch):
         text = (f"AI is learning this machine ({progress.get('samples') or 0}/{progress.get('needed_samples')} "
                 f"samples, {progress.get('hours') or 0}/{progress.get('needed_hours')} h)." if phase == "learning"
                 else "AI: no unusual change on this sensor.")
-        return dbc.Alert([html.I(className="fas fa-brain me-2"), text], color="light", className="py-2 mb-2")
+        return dbc.Alert([html.I(className="fas fa-brain me-2"), text], color="light",
+                         className="ai-line mb-2" if compact else "py-2 mb-2")
     admin = is_admin()
     cards = []
     for item in items:
@@ -240,6 +243,16 @@ def finding_box(data_folder, gid, ch):
         buttons = [dbc.Button(label, id={"type": "ai-feedback", "verdict": verdict, "key": key}, size="sm",
                               color=colour, outline=True, className="ms-1 mb-1", disabled=not admin)
                    for verdict, label, colour in VERDICTS] if item.get("kind") != "severity" else []
+        if compact:
+            title = str(item.get("title", "AI finding"))
+            short = title.split("likely ", 1)[1] if "likely " in title else title.split(": ", 1)[-1]
+            cards.append(html.Div([
+                html.I(className="fas fa-brain me-2"),
+                html.Span([html.Strong(short), html.Span(" " + str(item.get("message", "")), className="text-muted")],
+                          className="ai-line-text", title=f"{title}\n{item.get('message', '')}"),
+                html.Span(buttons, className="ai-line-buttons")],
+                className="ai-line " + ("ai-line-warning" if item.get("severity") == "warning" else "ai-line-info")))
+            continue
         cards.append(dbc.Alert([
             dbc.Row([
                 dbc.Col(html.Strong([html.I(className="fas fa-brain me-2"), str(item.get("title", "AI finding"))]),

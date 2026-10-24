@@ -68,22 +68,33 @@ try {
   await until('document.querySelector("#diag-capture-info").textContent.includes("moment you clicked")');
   await until('document.querySelector("#diag-trend .js-plotly-plot")?.layout?.shapes?.length === 1');
   if(process.env.DEMO_DIAGNOSTICS_SCREENSHOT) {
-    await wait(300);
-    const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+    // Lay the page out at screenshot size first, so Plotly redraws at that width.
+    await call('Emulation.setDeviceMetricsOverride',{width:1600,height:1150,deviceScaleFactor:1,mobile:false});
+    await evaluate('window.dispatchEvent(new Event("resize"))');
+    await wait(800);
+    const image=await call('Page.captureScreenshot',{format:'png'});
     await writeFile(process.env.DEMO_DIAGNOSTICS_SCREENSHOT,Buffer.from(image.data,'base64'));
+    await call('Emulation.clearDeviceMetricsOverride');
+    await evaluate('window.dispatchEvent(new Event("resize"))');
   }
   await evaluate('const s=document.querySelector("#diag-speed");s.value="1800";s.dispatchEvent(new Event("change"))');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.annotations?.[0]?.text?.includes("1800 CPM")');
-  await evaluate('document.querySelectorAll(".tree-leaf")[1].click()');
-  await until('document.querySelectorAll(".tree-leaf")[1].classList.contains("active")');
-  await evaluate('document.querySelectorAll(".tree-leaf")[0].click()');
+  await evaluate('document.querySelector("#diag-tree-tab input[value=measurements]").click()');
+  await until('document.querySelectorAll("#diag-measurements .tree-leaf").length > 1');
+  await evaluate('document.querySelectorAll("#diag-measurements .tree-leaf")[1].click()');
+  await until('document.querySelectorAll("#diag-measurements .tree-leaf")[1].classList.contains("active")');
+  await evaluate('document.querySelector("#diag-tree-tab input[value=assets]").click()');
+  await until('document.querySelector("#diag-tree-assets").style.display !== "none" && document.querySelector("#diag-measurements").style.display === "none"');
+  await evaluate('document.querySelectorAll("#diag-tree .tree-leaf")[1].click()');
+  await until('document.querySelectorAll("#diag-tree .tree-leaf")[1].classList.contains("active")');
+  await evaluate('document.querySelectorAll("#diag-tree .tree-leaf")[0].click()');
   await evaluate('document.querySelector("#diag-quantity input[value=velocity]").click()');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.yaxis?.title?.text?.startsWith("Velocity")');
   await evaluate('document.querySelector("#diag-view input[value=waveform]").click()');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.title?.text === "Waveform"');
   await evaluate(`document.querySelector('#diag-axis input[value="2"]').click()`);
   await until('document.querySelector("#diag-trend .js-plotly-plot")?.layout?.shapes?.length === 0');
-  await until('document.querySelector("#diag-plot .js-plotly-plot").getBoundingClientRect().height >= 350');
+  await until('document.querySelector("#diag-plot .js-plotly-plot").getBoundingClientRect().height >= 290');
   await navigate('/assets');
   assert.equal(await evaluate('document.querySelector("#asset-direction").value'),'Vertical');
   await navigate('/history');

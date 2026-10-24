@@ -1023,7 +1023,7 @@ def protect_dashboard():
                     'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
                     'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
                     'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
-                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | history_view.READ_CALLBACKS
+                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph', 'sidebar_user'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | history_view.READ_CALLBACKS
         status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
         if viewer and not admin and name not in readonly and not status_poll:
             return Response('Administrator access required for this action', 403)
@@ -1226,7 +1226,8 @@ sidebar = html.Div([
         dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-bug me-2"), "Debug Log"], href="/debug", active="exact", className="text-white"),
-    ], vertical=True, pills=True)
+    ], vertical=True, pills=True),
+    html.Div(id="sidebar-user", className="sidebar-user"),
 ], id="sidebar", style={"position": "fixed", "top": 0, "left": 0, "bottom": 0, "width": "18rem", "padding": "1rem", "paddingTop": "4rem", "backgroundColor": "#343a40", "transition": "all 0.3s"})
 
 data_storage_layout = dcc.Loading(id="loading-data-storage", type="default", children=html.Div(id="data-storage-container"))
@@ -1530,6 +1531,21 @@ app.layout = html.Div([
 # =========================
 # CALLBACKS
 # =========================
+
+@app.callback(Output("sidebar-user", "children"), Input("url", "pathname"))
+def sidebar_user(_path):
+    """Who is signed in, shown at the bottom of the menu."""
+    auth = request.authorization
+    if not os.environ.get('VDS_ADMIN_PASSWORD', ''):
+        name, role = "Local user", "Administrator (this computer only)"
+    elif auth and auth.username == os.environ.get('VDS_VIEWER_USER', 'viewer') and os.environ.get('VDS_VIEWER_PASSWORD'):
+        name, role = auth.username, "Viewer"
+    else:
+        name, role = (auth.username if auth else "admin"), "Administrator"
+    initials = "".join(part[0] for part in name.split()[:2]).upper() or "U"
+    return [html.Span(initials, className="user-avatar"),
+            html.Div([html.Div(name, className="user-name"), html.Div(role, className="user-role")], className="user-text")]
+
 
 @app.callback(Output("live-update-trigger", "data"), Input("live-refresh", "n_intervals"))
 def refresh_live_data(message):

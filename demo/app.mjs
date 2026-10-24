@@ -205,7 +205,10 @@ function enableRadios(selector, value, onChange) {
   main.querySelectorAll(`${selector} input`).forEach(input => {
     input.disabled = false; input.removeAttribute('title');
     input.checked = input.value === value;
-    input.addEventListener('change', () => { syncLabels(selector); if (input.checked) onChange(input.value); });
+    input.addEventListener('change', () => {
+      if (input.checked) main.querySelectorAll(`${selector} input`).forEach(other => { if (other !== input) other.checked = false; });
+      syncLabels(selector); if (input.checked) onChange(input.value);
+    });
   });
   syncLabels(selector);
 }
@@ -213,13 +216,18 @@ function selectHistoryChannel(ch) {
   channel = ch; historyMoment = null;
   main.querySelectorAll('#diag-axis input').forEach(input => { input.checked = input.value === ch; });
   syncLabels('#diag-axis');
-  main.querySelectorAll('.tree-leaf').forEach(leaf => leaf.classList.toggle('active', pattern(leaf).ch === ch));
+  main.querySelectorAll('#diag-tree .tree-leaf').forEach(leaf => leaf.classList.toggle('active', pattern(leaf).ch === ch));
   renderMachineHistory();
 }
 async function setupMachineHistory() {
   options('diag-range', [{value: '1d', label: '1 day'}, {value: '7d', label: '1 week'}, {value: 'max', label: 'Max'}], '1d');
   enableRadios('#diag-axis', channel, value => selectHistoryChannel(value));
-  main.querySelectorAll('.tree-leaf').forEach(leaf => {
+  enableRadios('#diag-tree-tab', 'assets', value => {
+    $('diag-tree-assets').style.display = value === 'measurements' ? 'none' : '';
+    $('diag-measurements').style.display = value === 'measurements' ? '' : 'none';
+    renderMeasurements();
+  });
+  main.querySelectorAll('#diag-tree .tree-leaf').forEach(leaf => {
     leaf.disabled = false; leaf.removeAttribute('title');
     leaf.addEventListener('click', () => selectHistoryChannel(pattern(leaf).ch));
   });
@@ -256,7 +264,27 @@ function nearestCapture(data) {
   const target = Date.parse(String(historyMoment).replace(' ', 'T'));
   return data.captures.reduce((best, item) => Math.abs(Date.parse(item.label) - target) < Math.abs(Date.parse(best.label) - target) ? item : best);
 }
+function renderMeasurements() {
+  // Saved spectra for the channel, newest first; clicking one opens it like a click on the trend.
+  const box = $('diag-measurements'), data = bank.channels[channel];
+  if (!box || box.style.display === 'none' || !data) return;
+  const list = [...data.captures].reverse(), chosen = nearestCapture(data);
+  box.replaceChildren();
+  const head = document.createElement('div'); head.className = 'meas-head';
+  head.textContent = `CH${channel} · ${list.length} saved spectra`; box.append(head);
+  let day = null;
+  for (const item of list) {
+    const [date, time] = String(item.label).split(/[ T]/);
+    if (date !== day) { day = date; const row = document.createElement('div'); row.className = 'meas-day'; row.textContent = date; box.append(row); }
+    const button = document.createElement('button');
+    button.className = 'tree-leaf' + (item === chosen ? ' active' : '');
+    button.innerHTML = '<i class="fas fa-chart-bar me-2"></i>'; button.append((time || '').slice(0, 8));
+    button.addEventListener('click', () => { historyMoment = item.label; renderMachineHistory(); });
+    box.append(button);
+  }
+}
 async function renderMachineHistory() {
+  renderMeasurements();
   const revision = ++historyVersion, data = bank.channels[channel];
   const names = [...historyMetrics].filter(name => data.history[name]);
   const traces = names.map((name, i) => ({x: data.times, y: data.history[name], name: chips[name][0], yaxis: i ? 'y2' : 'y',
@@ -265,7 +293,7 @@ async function renderMachineHistory() {
   traces.push({x: data.captures.map(item => item.label), y: data.captures.map(() => 0.5), yaxis: 'y3', name: 'Saved spectra',
     type: 'scatter', mode: 'markers', marker: {symbol: 'line-ns-open', size: 12, color: '#1f3b73', line: {width: 2}}, hovertemplate: 'Saved spectrum<extra></extra>'});
   const axis = name => ({title: {text: `${chips[name][0]} ${data.metadata[name]?.unit || ''}`, font: {color: chips[name][1]}}, tickfont: {color: chips[name][1]}, domain: [0, 1]});
-  const layout = {template: 'plotly_white', height: 360, margin: {l: 60, r: 60, t: 30, b: 40}, hovermode: 'x unified', showlegend: false,
+  const layout = {template: 'plotly_white', height: 220, margin: {l: 60, r: 60, t: 30, b: 40}, hovermode: 'x unified', showlegend: false,
     xaxis: {type: 'date', rangeslider: {visible: true, thickness: 0.07, bgcolor: '#f1f5f9'}}, yaxis: names[0] ? axis(names[0]) : {domain: [0, 1]},
     yaxis3: {domain: [0, 0.06], visible: false, range: [0, 1]}, shapes: [], annotations: []};
   if (names[1]) layout.yaxis2 = {...axis(names[1]), overlaying: 'y', side: 'right', showgrid: false};
@@ -300,10 +328,10 @@ async function renderCapture(capture) {
   if (historyView === 'waveform') {
     const wave = capture.waveform;
     return plot(graph, {data: [{x: wave.waveform_data.map((_, i) => i / wave.sampling_freq), y: wave.waveform_data, type: 'scatter', mode: 'lines', line: {color: '#1f3b73', width: 1}}],
-      layout: {template: 'plotly_white', title: {text: 'Waveform'}, height: 460, xaxis: {title: {text: 'Time (s)'}}, yaxis: {title: {text: 'Waveform (sensor units)'}}}});
+      layout: {template: 'plotly_white', title: {text: 'Waveform'}, height: 300, xaxis: {title: {text: 'Time (s)'}}, yaxis: {title: {text: 'Waveform (sensor units)'}}}});
   }
   if (historyQuantity === 'envelope') {
-    return plot(graph, {data: [], layout: {template: 'plotly_white', height: 460, xaxis: {visible: false}, yaxis: {visible: false},
+    return plot(graph, {data: [], layout: {template: 'plotly_white', height: 300, xaxis: {visible: false}, yaxis: {visible: false},
       annotations: [{text: 'The envelope spectrum is calculated by the dashboard from each waveform; the public demo shows acceleration and velocity.', showarrow: false, xref: 'paper', yref: 'paper', x: 0.5, y: 0.5}]}});
   }
   const hz = capture.spectrum_data.map((_, i) => i * capture.bandwidth / capture.lines);
@@ -322,7 +350,7 @@ async function renderCapture(capture) {
     traces.push({x: harmonics, y: harmonics.map(nearest), type: 'scatter', mode: 'markers', name: 'Harmonics', marker: {symbol: 'diamond', size: 9, color: '#e3262f', line: {color: 'white', width: 1}}, hovertemplate: '%{x:.2f} Hz<extra></extra>'});
     annotations.push({x: harmonics[0], y: 1, yref: 'paper', text: `<b>${Math.round(rpm)} CPM</b><br>1x`, showarrow: false, xanchor: 'left', yanchor: 'top', align: 'left'});
   }
-  await plot(graph, {data: traces, layout: {template: 'plotly_white', height: 470, showlegend: false, margin: {l: 60, r: 20, t: 20, b: 60}, shapes, annotations,
+  await plot(graph, {data: traces, layout: {template: 'plotly_white', height: 300, showlegend: false, margin: {l: 60, r: 20, t: 20, b: 60}, shapes, annotations,
       xaxis: historyTools.has('logx') ? {type: 'log', title: {text: 'Frequency (Hz)'}} : {title: {text: 'f [Hz + CPM]'}, tickmode: 'array', tickvals: ticks, ticktext: ticks.map(t => `${Math.round(t)}<br>${Math.round(t * 60).toLocaleString('en')}`)},
       yaxis: {type: historyTools.has('logy') ? 'log' : 'linear', title: {text: historyQuantity === 'velocity' ? 'Velocity (mm/s, derived from the g² spectrum)' : 'Acceleration (published power spectrum, device units)'}}}});
   if (!peaks || !historyTools.has('peaks')) return;
