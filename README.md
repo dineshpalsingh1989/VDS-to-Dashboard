@@ -26,22 +26,36 @@ when something changes.
 
 ## Quick start
 
-You need a 64-bit Linux computer (PC, server or Raspberry Pi OS 64-bit) with
-[Docker Engine and the Compose plugin](https://docs.docker.com/engine/install/).
-Python is inside the container.
+On any 64-bit Linux computer (PC, server, Raspberry Pi OS 64-bit or a Cytron IRIV
+Edge AI), paste this one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/VDS-to-Dashboard/main/scripts/install.sh | bash
+```
+
+It installs Docker if needed, downloads the latest release (checksum checked),
+starts the dashboard with a new administrator password, and tells you where to log
+in. On an IRIV Edge AI it also installs the AI. Run the same line again to update.
+
+Then open **http://127.0.0.1:8050**, sign in as `admin` (the password is in
+`~/vds-to-dashboard/.env`: `grep VDS_ADMIN_PASSWORD ~/vds-to-dashboard/.env`), add
+your broker under **Settings > MQTT**, and allow your VDS130 when it appears.
+
+Prefer to read a script before running it? Download it first:
+`curl -fsSLO https://raw.githubusercontent.com/dineshpalsingh1989/VDS-to-Dashboard/main/scripts/install.sh`,
+look at it, then `bash install.sh`. Options: `--dir PATH`, `--iriv`, `--no-iriv`,
+`--build` (build here instead of downloading the image).
+
+<details>
+<summary>Other ways to install: git clone, release download, prebuilt image, Windows, IRIV Edge AI</summary>
+
+**Git clone**
 
 ```bash
 git clone https://github.com/dineshpalsingh1989/VDS-to-Dashboard.git
 cd VDS-to-Dashboard
 bash scripts/linux-start.sh
 ```
-
-Open **http://127.0.0.1:8050** and sign in as `admin` with the password the script
-saved in `.env` (it is never printed). Then add your broker under
-**Settings > MQTT**.
-
-<details>
-<summary>Other ways to install: release download, prebuilt image, Windows, IRIV Edge AI</summary>
 
 **Release download with checksum**
 
@@ -69,6 +83,8 @@ open the same address locally. For permanent remote access, put HTTPS in front.
 </details>
 
 ## Update in one command
+
+Run the install line again, or inside the install folder:
 
 ```bash
 bash scripts/update.sh

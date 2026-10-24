@@ -4,6 +4,11 @@
 **VDS130** page; click **Allow** and it starts running on Home. Nothing it sends is
 used before that. Existing units keep running after the update.
 
+**One-line install.** On 64-bit Linux:
+`curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/VDS-to-Dashboard/main/scripts/install.sh | bash`
+installs Docker if needed, downloads this release (checksum checked) and starts the
+dashboard; on a Cytron IRIV Edge AI it also installs the AI. Run it again to update.
+
 **One-command update.** `bash scripts/update.sh` fetches the latest version, keeps
 `.env`, the database, recordings, backups and the AI's learning, and restarts the
 dashboard the way it was started.

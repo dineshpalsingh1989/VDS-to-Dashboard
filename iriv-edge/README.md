@@ -49,6 +49,14 @@ AI, then serves the dashboard at http://127.0.0.1:8060. Press a sensor's
 
 ## Install
 
+The quickest way is the one-line installer from the main README; on a CM5 it detects
+the IRIV Edge AI and runs `install.sh` below for you:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dineshpalsingh1989/VDS-to-Dashboard/main/scripts/install.sh | bash
+```
+
+
 On the IRIV, using Cytron's Bookworm image, from the repository folder:
 
 ```bash
