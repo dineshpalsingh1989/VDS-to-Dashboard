@@ -58,6 +58,7 @@ class LinuxLauncherTests(unittest.TestCase):
         self.assertNotIn(password, result.stdout + result.stderr)
         self.assertEqual((self.root / ".env").stat().st_mode & 0o777, 0o600)
         self.assertIn("up -d --build --wait", (self.root / "calls.log").read_text())
+        self.assertIn("VDS_START_MODE=build", config)  # scripts/update.sh restarts the same way
 
     def test_image_mode_preserves_existing_configuration(self):
         config = "VDS_ADMIN_PASSWORD=keep-this-local-test-value\nVDS_PORT=8060\n"

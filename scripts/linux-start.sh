@@ -37,6 +37,9 @@ if ! grep -Eq '^VDS_ADMIN_PASSWORD=.+$' .env && [[ -z "${VDS_ADMIN_PASSWORD:-}" 
   printf '%s\n' 'Created an administrator password in .env. It is not printed to the terminal.'
 fi
 chmod 600 .env
+# Remember how this install starts, so scripts/update.sh restarts it the same way.
+sed -i '/^VDS_START_MODE=/d' .env
+printf 'VDS_START_MODE=%s\n' "${mode#--}" >> .env
 
 file=docker/compose.yaml
 if [[ "$mode" == --image ]]; then

@@ -317,7 +317,9 @@ def register(app, get_connection, data_folder, get_live=None):
                                          (gid,)):
                 state = json.loads(body or "{}")
                 asset = historian.asset_settings(conn, gid, ch)
-                channels.append({"ch": ch, "location": asset.get("location", ""), "machine": asset.get("machine", ""),
+                ai = historian.ai_channel_settings(conn, gid, ch)  # names typed in the AI setup count too
+                channels.append({"ch": ch, "location": asset.get("location", "") or ai.get("location", ""),
+                                 "machine": asset.get("machine", "") or ai.get("machine", ""),
                                  "site": asset.get("site", ""), "fresh": freshness(state)["status"] == "fresh"})
             result.append({"gid": gid, "channels": channels})
         return result
