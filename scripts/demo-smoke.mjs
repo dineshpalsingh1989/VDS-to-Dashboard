@@ -42,6 +42,8 @@ try {
   await until('document.body?.dataset.demoReady === "/diagnostics" && document.querySelector("#diag-view input[value=waveform]")?.checked');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.title?.text === "Waveform"');
   assert.equal(await evaluate('document.querySelector("#diag-axis input:checked")?.value'),'2');
+  await evaluate('document.querySelector("#diag-view input[value=spectrum]").click()');  // back to the default view
+  await evaluate(`document.querySelector('#diag-axis input[value="1"]').click()`);
   await evaluate('location.hash="/"');
   await until('document.body?.dataset.demoReady === "/"');
   const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
