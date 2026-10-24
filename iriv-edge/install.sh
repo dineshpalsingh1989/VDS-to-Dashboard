@@ -6,7 +6,7 @@ set -Eeuo pipefail
 usage() {
   printf '%s\n' 'Usage: bash iriv-edge/install.sh [--image] [--with-hailo] [--no-advisor] [--data-dir PATH]' \
     '  --image        Pull the published container instead of building it on the device.' \
-    '  --with-hailo   Install the AI HAT+ software (hailo-all) for future camera work. Reboot afterwards.' \
+    '  --with-hailo   Install the AI HAT+ software (hailo-all) so the neural model runs on the HAT. Reboot afterwards.' \
     '  --no-advisor   Start only the dashboard.' \
     '  --data-dir     Dashboard data folder when not using the Docker volume (native install).'
 }

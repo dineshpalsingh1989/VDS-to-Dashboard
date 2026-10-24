@@ -39,6 +39,9 @@ from reports import Reports, atomic_json
 from storage import Storage, detect
 from symptoms import Knowledge, SpectrumView, diagnose, frequency_table
 
+from brain import NAMES as BRAIN_NAMES
+from brain import RULE_IDS as BRAIN_RULES
+from brain import Brain, features, order_rise
 from machine_view import compare as compare_machine
 from vds_dashboard.historian import ai_setup_missing  # learning.py puts the repository on sys.path
 from vds_dashboard.signals import spectrum_amplitude
@@ -141,7 +144,7 @@ def similarity(a, b):
 class Advisor:
     def __init__(self, data_dir, knowledge_dir=HERE / "knowledge", learn_samples=48, learn_hours=12.0,
                  max_rate=None, use_ssd=True, mounts_file="/proc/mounts", sys_block="/sys/block",
-                 report_days=180):
+                 report_days=180, neural=True):
         self.data_dir = Path(data_dir)
         self.db_path = self.data_dir / "vibration_trends.db"
         self.local = self.data_dir / "ai"
@@ -155,6 +158,8 @@ class Advisor:
         self.assets, self.velocity, self.ai, self.enabled, self.units = {}, {}, {}, set(), {}
         self.trends, self.trend_hour, self.tables_text = {}, None, None
         self.setup_needed = {}  # (gid, ch) -> what the user still has to enter before the AI may learn it
+        # Neural second opinion: on the Hailo AI HAT+ when fitted, else the CPU; None when switched off
+        self.brain = Brain() if neural else None
         self.events = []
         root = self.storage.root()
         self.store = ProfileStore(root / "learning.db") if root.exists() else None
@@ -437,6 +442,8 @@ class Advisor:
             changed = False
         elif not changed and not borderline:
             self.store.learn(gid, ch, kind, signature, band, x, ms)
+        if rpm:
+            state["orders"] = np.round(order_rise(freqs, 10 * (x - normal), rpm), 3).tolist()
         detail = None
         if changed:
             info = self.info(gid, ch)
@@ -447,6 +454,7 @@ class Advisor:
                                   "normal": float(f"{normal_level[i]:.4g}")} for i, hz, _rise in found],
                       "floor_db": {k: round(v, 1) for k, v in floor.items()}, "rpm": rpm,
                       "matches": sorted(matches, key=lambda m: -m["confidence"])}
+            self.second_opinion(gid, ch, detail)
             if peaks:  # growth of the strongest changed peak, for the trend sentence
                 history = state.setdefault("peak_history", [])
                 history.append([ms, round(peaks[0][1], 1)])
@@ -455,6 +463,32 @@ class Advisor:
         self.after(gid, ch, kind, state, transition, ms,
                    {"name": kind, "freqs": freqs, "current": x, "normal": normal, "now_level": now_level,
                     "normal_level": normal_level, "unit": unit, "axis": axis})
+
+    def second_opinion(self, gid, ch, detail):
+        """Ask the neural network what the change looks like, and set it beside the rule-based matches."""
+        if not self.brain or not self.brain.ready or not detail.get("rpm"):
+            return
+        spectrum, envelope = (self.store.state(gid, ch, k).get("orders") for k in ("spectrum", "envelope"))
+        top = self.brain.predict(features(spectrum, envelope))
+        where = "Hailo AI HAT+" if self.brain.backend.name == "hailo" else "CPU"
+        detail["brain"] = {"backend": self.brain.backend.name, "where": where, "top": [list(t) for t in top[:3]],
+                           "bearing": round(sum(p for c, p in top if c in ("outer_race", "inner_race",
+                                                                          "rolling_element")), 3)}
+        label, probability = next(((c, p) for c, p in top if c != "normal"), (None, 0))
+        matches = detail["matches"]
+        agreeing = [m for m in matches if label and m["id"] in BRAIN_RULES.get(label, ())]
+        detail["brain"]["names"] = [BRAIN_NAMES.get(c, c) for c, _p in top[:3]]
+        detail["brain"]["agrees"] = bool(agreeing and probability >= 0.5)
+        if agreeing and probability >= 0.5:
+            agreeing[0]["evidence"] = agreeing[0]["evidence"] + [
+                f"the neural network on the {where} agrees ({probability:.0%})"]
+        elif not matches and label and probability >= 0.8 and top[0][0] == label:
+            matches.append({"id": f"neural:{label}", "name": f"{BRAIN_NAMES[label]} (neural network)",
+                            "confidence": round(0.8 * probability, 2),
+                            "evidence": [f"the neural network on the {where} sees a {BRAIN_NAMES[label].lower()} "
+                                         f"pattern ({probability:.0%})"],
+                            "advice": "The rule library found no exact match, so treat this as a lead: check the "
+                                      "machine for it at the next stop."})
 
     def recognise(self, gid, ch, kind, rise_db):
         """Compare a change with faults people confirmed before, on this or any other channel."""
@@ -744,6 +778,9 @@ class Advisor:
                 growth = (history[-1][1] - history[0][1]) / days
                 if growth >= 0.5:
                     text += f" The peak is growing about {growth:.1f} dB per day."
+            if d.get("brain"):
+                name, probability = d["brain"]["top"][0]
+                text += f" Neural network ({d['brain']['where']}): {BRAIN_NAMES.get(name, name)} {probability:.0%}."
             if not rpm:
                 text += " No running speed is known, so faults cannot be named: enter a fixed RPM in the asset registry."
         elif kind == "waveform":
@@ -918,7 +955,8 @@ class Advisor:
                 f"AI advisor is {backlog} samples behind. It is catching up quietly in the background.")})
         bearings = sorted({b["designation"] for b in self.knowledge.bearings.values()})
         self.channels = channels
-        return {"generated_at": time.time(), "summary": summary, "backlog": backlog,
+        neural = self.brain.status if self.brain else "Neural model switched off."
+        return {"generated_at": time.time(), "summary": summary, "backlog": backlog, "neural": neural,
                 "channels": {"monitoring": len(channels) - learning, "learning": learning},
                 "enabled_gateways": sorted(self.enabled), "storage": self.storage_status,
                 "progress": self.progress(channels)[:500], "bearings": bearings,
@@ -942,6 +980,8 @@ class Advisor:
     def close(self):
         if self.store:
             self.store.close()
+        if self.brain:
+            self.brain.close()
 
 
 def status(advisor):
@@ -968,6 +1008,7 @@ def main(argv=None):
     parser.add_argument("--learn-hours", type=float, default=12, help="Hours of operation needed before monitoring")
     parser.add_argument("--report-days", type=int, default=180, help="Days of report folders to keep")
     parser.add_argument("--no-ssd", action="store_true", help="Keep AI data on the eMMC even if an SSD is mounted")
+    parser.add_argument("--no-neural", action="store_true", help="Do not run the neural model (Hailo AI HAT+ or CPU)")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
     parser.add_argument("--status", action="store_true", help="Show learning progress per channel and exit")
     parser.add_argument("--relearn", metavar="GATEWAY/CHANNEL", help="Forget what was learned for one channel")
@@ -975,7 +1016,7 @@ def main(argv=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     advisor = Advisor(args.data_dir, args.knowledge, args.learn_samples, args.learn_hours, args.max_rate,
-                      use_ssd=not args.no_ssd, report_days=args.report_days)
+                      use_ssd=not args.no_ssd, report_days=args.report_days, neural=not args.no_neural)
     if args.status or args.relearn:
         if advisor.store is None:
             raise SystemExit("AI data is on an SSD that is not mounted.")

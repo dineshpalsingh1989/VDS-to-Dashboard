@@ -1,0 +1,15 @@
+{
+ "version": "2026.10-synthetic-2",
+ "classes": [
+  "normal",
+  "unbalance",
+  "misalignment",
+  "looseness",
+  "outer_race",
+  "inner_race",
+  "rolling_element"
+ ],
+ "input": "256 spectrum + 256 envelope order bins, rise over normal in dB / 20, 0-16x running speed",
+ "train_accuracy": 0.9956,
+ "test_accuracy": 0.9296
+}

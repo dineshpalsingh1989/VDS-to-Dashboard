@@ -356,6 +356,22 @@ class AdvisorFeatureTests(AdvisorBase):
         self.assertIn("misalignment likely", machine["title"])
         self.assertTrue(any("2.5 times the non-drive end" in note for note in machine["machine_notes"]))
 
+    def test_neural_network_gives_a_second_opinion(self):
+        advisor = self.learned()
+        self.run_samples(3, early=True)
+        report = self.cycle(advisor)
+        self.assertIn("Neural model running on the CPU", report["neural"])
+        finding = next(f for f in report["findings"] if f["kind"] == "envelope")
+        opinion = finding["detail"]["brain"]
+        self.assertEqual((opinion["backend"], opinion["top"][0][0]), ("cpu", "outer_race"))
+        self.assertGreater(opinion["bearing"], 0.9)
+        self.assertIn("the neural network on the CPU agrees", " ".join(finding["detail"]["matches"][0]["evidence"]))
+        self.assertIn("Neural network (CPU): Bearing outer race defect", finding["message"])
+        quiet = ai_advisor.Advisor(self.data, self.knowledge, learn_samples=10, learn_hours=1, neural=False,
+                                   mounts_file=self.mounts, sys_block=self.sys_block)
+        self.opened.append(quiet)
+        self.assertEqual(self.cycle(quiet)["neural"], "Neural model switched off.")
+
     def test_each_new_finding_gets_an_evidence_folder(self):
         advisor = self.learned()
         self.run_samples(2, fault=True)

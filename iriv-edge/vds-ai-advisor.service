@@ -1,6 +1,6 @@
 # Installed by iriv-edge/install.sh, which fills in @REPO@ and @DATA_DIR@.
-# Advisory only: no network, read-only historian, no access to I/O devices,
-# low priority, at most half a CPU core and 1 GB of memory.
+# Advisory only: no network, read-only historian, no access to I/O devices except
+# the Hailo AI HAT+ accelerator, low priority, at most half a CPU core and 1 GB of memory.
 [Unit]
 Description=VDS-to-Dashboard AI advisor (advisory only)
 After=docker.service
@@ -31,7 +31,10 @@ ReadWritePaths=-/mnt -/media
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-PrivateDevices=yes
+# Only the Hailo AI HAT+ (/dev/hailo0) besides the usual /dev/null, /dev/zero and /dev/urandom.
+# Without the HAT the neural model simply runs on the CPU.
+DevicePolicy=closed
+DeviceAllow=/dev/hailo0 rw
 
 [Install]
 WantedBy=multi-user.target

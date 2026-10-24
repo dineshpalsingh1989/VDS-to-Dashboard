@@ -43,6 +43,8 @@ AI, then serves the dashboard at http://127.0.0.1:8060. Press a sensor's
 | `bearing_tool.py` | Adds bearings from the command line |
 | `knowledge/` | Fault symptoms, bearing library (69 bearings), ISO severity zones. See [knowledge/README.md](knowledge/README.md) |
 | `demo/` | Simulated plant to see the AI working, without hardware |
+| `brain.py`, `models/`, `hailo/` | Neural second opinion on the Hailo AI HAT+ (see "The AI HAT+") |
+| `machine_view.py` | Compares the sensors of one machine (axial, vertical, drive end) |
 | `vds-ai-advisor.service` | Hardened systemd unit |
 
 ## Install
@@ -237,25 +239,56 @@ waveforms at the defaults, that is about 2.9 GB. The learned profiles take about
 
 ## The AI HAT+
 
-Vibration learning runs on the CM5 processor; the measurements above show it has
-plenty of capacity. The AI HAT+ can only run models that were trained and
-compiled on a PC, and cannot learn on the device, so it is not used for this.
-It is a good fit for camera work on the IRIV's two camera ports. None of these
-ideas are built yet:
+The Hailo chip on the AI HAT+ runs Hailo's own closed firmware; we do not change
+it. What we put on it is our own **neural model**, compiled for the chip, which
+gives every AI finding a second opinion:
 
-- **Gauge reading.** Read analogue pressure and temperature gauges and trend them
-  beside vibration.
-- **Visual checks.** Spot leaks, smoke or belt misalignment.
-- **Area awareness.** Log when a person is near a machine whose vibration is
-  high. This would only log, never interlock.
+- The advisor already knows each machine's normal. The network looks at how the
+  spectrum and the envelope spectrum changed from that normal, laid out in
+  multiples of running speed, so one network works for every machine and speed.
+- It names the pattern: unbalance, misalignment, looseness, outer race, inner race
+  or rolling element (512 inputs, 64 and 32 hidden, 7 outputs).
+- When it agrees with the rule-based diagnosis, the finding says so. When the rules
+  find no match but the network is at least 80 % sure, its answer is added as a
+  lead. The bell's explanation shows it under "Second opinion: neural network".
+- Without the HAT, or if the HAT fails, the same weights run on the CM5 processor
+  (well under a millisecond), so nothing stops working.
 
-`install.sh --with-hailo` installs the HAT software for that future work.
+| File | Purpose |
+|---|---|
+| `brain.py` | Runs the model: Hailo AI HAT+ through HailoRT, or the CPU |
+| `models/vibration_brain.npz` | The trained weights (CPU) |
+| `models/vibration_brain.onnx` | The same network for Hailo's compiler |
+| `models/vibration_brain.hef` | The compiled model for the HAT (you build it, see below) |
+| `hailo/train_brain.py` | Trains the model on a PC (numpy, fixed seed) |
+| `hailo/compile_hef.py` | Compiles the ONNX file into a HEF (Hailo Dataflow Compiler, x86 Linux) |
+
+To use the HAT:
+
+1. `bash iriv-edge/install.sh --with-hailo`, reboot, then run `install.sh` again.
+2. On an x86 Linux PC with Hailo's Dataflow Compiler (free account on the Hailo
+   Developer Zone): `python iriv-edge/hailo/compile_hef.py --arch hailo8l` for the
+   13 TOPS HAT, or `--arch hailo8` for 26 TOPS.
+3. Copy `vibration_brain.hef` to `iriv-edge/models/` on the IRIV Edge AI and restart
+   the advisor: `sudo systemctl restart vds-ai-advisor`.
+4. Check it: `python3 iriv-edge/brain.py` prints which backend runs and how often the
+   HAT agrees with the CPU model. Health Agents shows the same status.
+
+The model is trained on synthetic fault patterns (about 93 % right on fresh
+synthetic cases; the three bearing faults are the ones it mixes up, which is why
+the bearing number in the setup still matters). Confirmed findings from the
+dashboard are the data for the next training round. The compile step follows
+Hailo's documented ClientRunner flow but has not been run here, since it needs
+Hailo's compiler; `python3 iriv-edge/brain.py` (step 4) is how to confirm the HEF.
+
+The HAT is also a good fit for camera work on the IRIV's two camera ports, such as
+reading analogue gauges or spotting leaks. None of that is built yet.
 
 ## Safety
 
 The advisor follows the project rules in `AGENTS.md`: advisory agents report
 findings and must not issue machine commands. The service has no network access
-and no device access. It opens the historian read-only and writes only to its
+and no device access except the Hailo AI HAT+ (`/dev/hailo0`). It opens the historian read-only and writes only to its
 own folder (`<data>/ai/`, or the SSD). The dashboard caps advisor findings at
 "warning", so they never appear as alarms. Feedback buttons only change what the
 AI learns.

@@ -453,7 +453,10 @@ def register(app, get_connection, data_folder):
                                  html.Td(f"{item.get('gateway_id')} CH{item.get('channel')}"), html.Td(phase),
                                  html.Td(str(item.get("trend", ""))), html.Td("; ".join(item.get("notes", [])))]))
         storage = (report.get("storage") or {}).get("message", "")
-        head = html.Small(f"{report.get('summary', '')} {storage}", className="text-muted d-block mb-2")
+        neural = report.get("neural")
+        head = html.Div([html.Small(f"{report.get('summary', '')} {storage}", className="text-muted d-block"),
+                         html.Small([html.I(className="fas fa-microchip me-1"), neural], className="text-muted d-block")
+                         if neural else None], className="mb-2")
         if not rows:
             return [head, html.P("No sensors have AI analysis switched on. Switch it on in the asset registry.",
                                  className="text-muted")]

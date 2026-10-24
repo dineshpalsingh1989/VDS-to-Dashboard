@@ -18,6 +18,9 @@ FINDING = {"gateway_id": "GW1", "channel": "1", "kind": "spectrum", "severity": 
            "message": "Pump P-1 (GW1 CH1): spectrum changed from learned normal.",
            "detail": {"rpm": 1485, "peaks": [[88.75, 14.2]], "floor_db": {"all": 0.5, "upper": 4.0}, "unit": "mm/s",
                       "levels": [{"hz": 88.75, "now": 2.6, "normal": 0.42}],
+                      "brain": {"backend": "hailo", "where": "Hailo AI HAT+", "agrees": True, "bearing": 0.97,
+                                "top": [["outer_race", 0.91], ["rolling_element", 0.05], ["normal", 0.02]],
+                                "names": ["Bearing outer race defect", "Bearing rolling element defect", "Normal running"]},
                       "matches": [{"id": "bearing_outer_race", "name": "Bearing outer race defect", "confidence": 0.86,
                                    "evidence": ["peak at 3.59x running speed matches BPFO of 6205-2RS"],
                                    "advice": "Check the bearing at the next stop and plan a replacement."},
@@ -218,7 +221,9 @@ class ChannelCardTests(unittest.TestCase):
         text = json.dumps(body["ai-explain-body"], ensure_ascii=False)
         for words in ("Act soon", "outer ring (outer race)", "What the AI saw", "Why it thinks so", "What to do",
                       "0.42 → 2.6 mm/s", "Velocity (mm/s", "Normal (learned)", "Outer race (BPFO)",
-                      "Mechanical looseness"):
+                      "Mechanical looseness", "Second opinion: neural network",
+                      "The neural network on the Hailo AI HAT+ says: Bearing outer race defect 91%",
+                      "It agrees with the diagnosis above."):
             self.assertIn(words, text)
         self.assertIn('"disabled": true', text)  # viewers see the feedback buttons but cannot press them
 

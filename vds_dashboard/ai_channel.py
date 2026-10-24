@@ -295,6 +295,20 @@ def waveform_picture(evidence):
     return figure
 
 
+def second_opinion(opinion):
+    """What the neural network (on the Hailo AI HAT+ or the processor) thinks, beside the rule-based diagnosis."""
+    if not opinion or not opinion.get("top"):
+        return None
+    where = "the Hailo AI HAT+" if opinion.get("backend") == "hailo" else "the processor (no Hailo HAT in use)"
+    names = opinion.get("names") or [c for c, _p in opinion["top"]]
+    ranked = ", ".join(f"{name} {p:.0%}" for name, (_c, p) in zip(names, opinion["top"], strict=False))
+    verdict = ("It agrees with the diagnosis above." if opinion.get("agrees") else
+               "It sees this differently, so weigh both before acting.")
+    return html.Div([html.Div("Second opinion: neural network", className="explain-label"),
+                     html.P([html.I(className="fas fa-microchip me-2"), f"The neural network on {where} says: {ranked}. ",
+                             html.Span(verdict, className="fw-semibold")], className="mb-1")])
+
+
 def explanation(data_folder, conn, gid, ch, admin):
     report = read_json(os.path.join(data_folder, "ai", "findings.json"), {})
     items = [f for f in report.get("findings", []) if f.get("gateway_id") == gid and f.get("channel") == ch]
@@ -331,6 +345,7 @@ def explanation(data_folder, conn, gid, ch, admin):
             html.Small("No picture saved for this finding.", className="text-muted"),
             html.Div([html.Div("Why it thinks so", className="explain-label"),
                       html.Ul([html.Li(text) for text in best.get("evidence", [])])]) if best.get("evidence") else None,
+            second_opinion((item.get("detail") or {}).get("brain")),
             html.Div([html.Div("Across the machine", className="explain-label"),
                       html.Ul([html.Li(text) for text in item.get("machine_notes", [])])])
             if item.get("machine_notes") else None,
