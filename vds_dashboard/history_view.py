@@ -25,10 +25,11 @@ from .fault_frequencies import marker_lines, nearest_fault
 from .signals import envelope_spectrum, velocity_from_acceleration, waveform_stats
 from .spectrum_view import add_cpm_axis, add_harmonic_markers, spectrum_figure
 from .vds import freshness, spectrum_xy
+from . import waveform_view
 
 READ_CALLBACKS = {"diag_tree_tab", "diag_measurements", "diag_measure_pick", "diag_tree", "diag_init", "diag_tree_pick", "diag_axis_options", "diag_select_channel",
                   "diag_overview", "diag_cell_pick", "diag_pick_time", "diag_trend", "diag_view_capture",
-                  "diag_bearing_load", "diag_download", "diag_bearing_matches", "diag_bearing_pick"}
+                  "diag_bearing_load", "diag_download", "diag_bearing_matches", "diag_bearing_pick", "diag_wave_bar"}
 # (metric name in the historian, chip label, colour)
 METRICS = (("Acceleration", "Acc RMS", "#1f77b4"), ("Velocity", "Vel RMS", "#ff7f0e"),
            ("True Peak", "0-P", "#d62728"), ("Displacement", "Disp", "#9467bd"),
@@ -133,6 +134,17 @@ def page():
                             dcc.Download(id="diag-file"),
                         ], lg=5, className="d-flex justify-content-lg-end align-items-center"),
                     ], className="g-2 align-items-center mt-1"),
+                    html.Div([
+                        tool_toggles("diag-wave-tools", [
+                            {"label": icon("fa-sync-alt", "Turns"), "value": "revs"},
+                            {"label": icon("fa-bolt", "Impacts"), "value": "impacts"},
+                            {"label": icon("fa-history", "Earlier"), "value": "reference"},
+                            {"label": icon("fa-circle-notch", "Orbit"), "value": "orbit"},
+                        ], ["revs", "impacts"]),
+                        button_radio("diag-wave-zoom", [{"label": "All", "value": "all"},
+                                                        {"label": "1 turn", "value": "1"},
+                                                        {"label": "5 turns", "value": "5"}], "all"),
+                    ], id="diag-wave-bar", className="wave-bar", style={"display": "none"}),
                     html.Details([
                         html.Summary([html.I(className="fas fa-life-ring me-1"), "Bearing database"], className="small"),
                         html.Div([
@@ -590,13 +602,92 @@ def register(app, get_connection, data_folder):
         figure.update_layout(title=None, margin=dict(l=60, r=20, t=16, b=50), height=300)
         return figure, (rows if "peaks" in tools else []), capture, info, rpm, where
 
+    @app.callback(Output("diag-wave-bar", "style"), Input("diag-view", "value"))
+    def diag_wave_bar(view):
+        return {} if view == "waveform" else {"display": "none"}
+
+    def waveform_values(capture, quantity):
+        """The waveform in the asked unit: velocity (mm/s) and envelope need an acceleration sensor."""
+        values, fs = capture["values"], capture["sampling_freq"]
+        sensor = capture["context"].get("sensor_type")
+        accel = waveform_view.is_acceleration(sensor)
+        if quantity == "velocity":
+            if not accel:
+                raise ValueError("A velocity waveform is integrated from acceleration; this sensor reports "
+                                 f"{sensor or 'an unknown type'}.")
+            return waveform_view.velocity_waveform(values, fs), "Velocity (mm/s)", "mm/s"
+        if quantity == "envelope":
+            return waveform_view.envelope_waveform(values, fs), "Envelope (bearing impacts)", ""
+        unit = "g" if accel else "sensor units"
+        return values, f"Acceleration ({unit})" if accel else "Waveform (sensor units)", unit
+
+    def orbit_partner(conn, gid, ch):
+        """The channel at the same bearing in the other radial direction (H with V), if one is set up."""
+        me = historian.ai_channel_settings(conn, gid, ch)
+        other = {"horizontal": "vertical", "vertical": "horizontal"}.get(me.get("direction"))
+        name = str(me.get("machine") or "").strip().lower()
+        if not other or not name or not me.get("end"):
+            return None, me
+        for g, c, body in conn.execute("SELECT gateway_id, channel, settings FROM ai_settings WHERE channel != ''"):
+            s = json.loads(body or "{}")
+            if (g, c) != (gid, ch) and str(s.get("machine") or "").strip().lower() == name and \
+                    s.get("machine_type") == me.get("machine_type") and s.get("end") == me.get("end") and \
+                    s.get("direction") == other:
+                return (g, c), me
+        return None, me
+
+    def waveform_panel(conn, gid, ch, selected_ms, quantity, speed, unit, wave_tools, zoom, info):
+        capture = historian.nearest_capture(conn, gid, ch, "waveform", selected_ms)
+        if not capture:
+            raise ValueError("No saved waveform for this channel yet.")
+        fs = capture["sampling_freq"]
+        values, axis, value_unit = waveform_values(capture, quantity)
+        rpm, _where = speed_for(conn, gid, ch, capture, speed, unit)
+        wave_tools = wave_tools or []
+        notes = []
+        if "orbit" in wave_tools:
+            partner, me = orbit_partner(conn, gid, ch)
+            if not partner:
+                raise ValueError("An orbit needs a horizontal and a vertical sensor at the same bearing. Set the "
+                                 "machine, end and direction of both channels in the AI setup (gear on the channel).")
+            other = historian.nearest_capture(conn, partner[0], partner[1], "waveform", capture["timestamp_ms"])
+            if not other or abs(other["timestamp_ms"] - capture["timestamp_ms"]) > 1000 or not rpm:
+                raise ValueError(f"CH{partner[1]} has no waveform from the same moment (within 1 s) or no speed is "
+                                 "known, so no orbit can be drawn.")
+            other_values = waveform_values(other, quantity)[0]
+            h, v = (values, other_values) if me.get("direction") == "horizontal" else (other_values, values)
+            figure, text = waveform_view.orbit_figure(h, v, fs, rpm, value_unit or "units")
+            return figure, capture, html.Div([html.I(className="fas fa-circle-notch me-2"), text],
+                                             className="wave-note"), values, value_unit
+        lines = [(name, hz) for _k, name, hz, _c in marker_lines(
+            info, rpm, {"speed", "bearing", "gear", "electrical"}, 2, fs / 2)] if rpm else []
+        times, period = waveform_view.find_impacts(capture["values"], fs)
+        if "impacts" in wave_tools:
+            notes.append(html.Div([html.I(className="fas fa-bolt me-2"),
+                                   waveform_view.impact_summary(times, period, lines)], className="wave-note"))
+        reference = None
+        if "reference" in wave_tools:
+            oldest = historian.nearest_capture(conn, gid, ch, "waveform", 0)
+            if oldest and oldest["timestamp_ms"] != capture["timestamp_ms"]:
+                stamp = datetime.fromtimestamp(oldest["timestamp_ms"] / 1000)
+                reference = (waveform_values(oldest, quantity)[0], oldest["sampling_freq"],
+                             f"Earlier: {stamp:%d %b %Y %H:%M}")
+            else:
+                notes.append(html.Div("No earlier waveform saved for this channel yet.", className="wave-note"))
+        if ("revs" in wave_tools or zoom in ("1", "5")) and not rpm:
+            notes.append(html.Div("No running speed known, so turns cannot be marked: type the speed.",
+                                  className="wave-note"))
+        figure = waveform_view.waveform_figure(values, fs, axis, rpm, wave_tools, zoom, reference, times)
+        return figure, capture, html.Div(notes) if notes else None, values, value_unit
+
     @app.callback([Output("diag-plot", "figure"), Output("diag-capture-info", "children"), Output("diag-rms", "children"),
                    Output("diag-peaks", "children"), Output("diag-bearing", "children"), Output("diag-ai", "children"),
                    Output("diag-speed", "placeholder")],
                   [Input("diag-channel", "data"), Input("diag-time", "data"), Input("diag-view", "value"),
                    Input("diag-quantity", "value"), Input("diag-tools", "value"), Input("diag-speed", "value"),
-                   Input("diag-speed-unit", "value"), Input("diag-bearing-result", "children")])
-    def diag_view_capture(channel, selected_ms, view, quantity, tools, speed, unit, _saved):
+                   Input("diag-speed-unit", "value"), Input("diag-bearing-result", "children"),
+                   Input("diag-wave-tools", "value"), Input("diag-wave-zoom", "value")])
+    def diag_view_capture(channel, selected_ms, view, quantity, tools, speed, unit, _saved, wave_tools=None, zoom="all"):
         if not channel:
             return empty_figure("Choose a machine and channel.", 360), None, None, None, None, None, "auto"
         gid, ch = json.loads(channel)
@@ -612,20 +703,14 @@ def register(app, get_connection, data_folder):
                     note = f"Last {len(items)} saved spectra" + (" up to the moment you clicked." if selected_ms else ".")
                     return figure, html.Span(note, className="text-muted"), None, None, header, ai_box, "auto"
                 if view == "waveform":
-                    capture = historian.nearest_capture(conn, gid, ch, "waveform", selected_ms)
-                    if not capture:
-                        raise ValueError("No saved waveform for this channel yet.")
-                    values, fs = capture["values"], capture["sampling_freq"]
-                    figure = go.Figure(go.Scatter(x=np.arange(values.size) / fs, y=values, mode="lines",
-                                                  line=dict(color="#1f77b4", width=1)))
-                    figure.update_layout(template="plotly_white", height=300, margin=dict(l=60, r=20, t=16, b=45),
-                                         xaxis_title="t [s]", yaxis_title="Waveform (sensor units)")
+                    figure, capture, notes, values, value_unit = waveform_panel(
+                        conn, gid, ch, selected_ms, quantity, speed, unit, wave_tools, zoom, info)
                     stats = waveform_stats(values)
                     rms = html.Span([html.Span("RMS ", className="text-muted"), html.Strong(f"{stats['rms']:.4g}"),
-                                     html.Span(f"  ·  Peak {stats['peak']:.4g} · P-P {stats['peak_to_peak']:.4g} · "
-                                               f"CF {stats['crest']:.2f} · Kurtosis {stats['kurtosis']:.2f}",
+                                     html.Span(f" {value_unit}  ·  Peak {stats['peak']:.4g} · P-P {stats['peak_to_peak']:.4g}"
+                                               f" · CF {stats['crest']:.2f} · Kurtosis {stats['kurtosis']:.2f}",
                                                className="text-muted")])
-                    return figure, capture_pill(capture, selected_ms), rms, None, header, ai_box, "auto"
+                    return figure, capture_pill(capture, selected_ms), rms, notes, header, ai_box, "auto"
                 result = spectrum_view(conn, gid, ch, selected_ms, quantity, tools, speed, unit)
                 if result is None:
                     raise ValueError("No saved spectrum for this channel yet. Snapshots are kept every 30 minutes "

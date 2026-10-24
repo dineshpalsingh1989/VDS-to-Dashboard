@@ -201,7 +201,7 @@ class HistoryPageTests(unittest.TestCase):
         self.assertEqual(cell["diag-metrics"]["value"], ["Velocity", "Acceleration"])
 
     def view(self, view, quantity="acceleration", at=None, tools=("harmonics", "bearing", "peaks"), speed=None,
-             unit="rpm", viewer=True):
+             unit="rpm", viewer=True, wave_tools=("revs", "impacts"), zoom="all"):
         return self.request("diag_view_capture", [
             self.channel(), {"id": "diag-time", "property": "data", "value": at},
             {"id": "diag-view", "property": "value", "value": view},
@@ -209,7 +209,26 @@ class HistoryPageTests(unittest.TestCase):
             {"id": "diag-tools", "property": "value", "value": list(tools)},
             {"id": "diag-speed", "property": "value", "value": speed},
             {"id": "diag-speed-unit", "property": "value", "value": unit},
-            {"id": "diag-bearing-result", "property": "children", "value": None}], viewer=viewer)
+            {"id": "diag-bearing-result", "property": "children", "value": None},
+            {"id": "diag-wave-tools", "property": "value", "value": list(wave_tools)},
+            {"id": "diag-wave-zoom", "property": "value", "value": zoom}], viewer=viewer)
+
+    def test_waveform_tools(self):
+        body = self.view("waveform", zoom="1")
+        figure = body["diag-plot"]["figure"]
+        self.assertEqual(figure["layout"]["yaxis"]["title"]["text"], "Acceleration (g)")
+        self.assertAlmostEqual(figure["layout"]["xaxis"]["range"][1], 60 / 1480, places=4)  # one turn
+        self.assertTrue(any("1 turn = 40.5 ms" in a["text"] for a in figure["layout"]["annotations"]))
+        self.assertIn("impact", json.dumps(body["diag-peaks"]))
+        velocity = self.view("waveform", quantity="velocity")
+        self.assertEqual(velocity["diag-plot"]["figure"]["layout"]["yaxis"]["title"]["text"], "Velocity (mm/s)")
+        self.assertIn("mm/s", json.dumps(velocity["diag-rms"]))
+        earlier = self.view("waveform", at=self.first_ms + 47 * 1_800_000, wave_tools=("reference",))
+        self.assertIn("Earlier:", json.dumps(earlier["diag-plot"]["figure"]["data"][0]["name"]))
+        orbit = self.view("waveform", wave_tools=("orbit",))
+        self.assertIn("An orbit needs a horizontal and a vertical sensor", json.dumps(orbit["diag-plot"]))
+        bar = self.request("diag_wave_bar", [{"id": "diag-view", "property": "value", "value": "waveform"}])
+        self.assertEqual(bar["diag-wave-bar"]["style"], {})
 
     def test_spectrum_nearest_to_click_with_harmonics_and_cpm_axis(self):
         body = self.view("spectrum", at=self.first_ms + 60_000)
@@ -293,7 +312,9 @@ class HistoryPageTests(unittest.TestCase):
             {"id": "diag-tools", "property": "value", "value": []},
             {"id": "diag-speed", "property": "value", "value": None},
             {"id": "diag-speed-unit", "property": "value", "value": "rpm"},
-            {"id": "diag-bearing-result", "property": "children", "value": None}])
+            {"id": "diag-bearing-result", "property": "children", "value": None},
+            {"id": "diag-wave-tools", "property": "value", "value": []},
+            {"id": "diag-wave-zoom", "property": "value", "value": "all"}])
         self.assertIn("No saved spectrum", json.dumps(body["diag-plot"]["figure"]))
 
     def test_measurements_tab_lists_saved_spectra_and_opens_one(self):
