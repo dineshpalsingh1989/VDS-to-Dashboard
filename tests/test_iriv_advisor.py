@@ -329,6 +329,33 @@ class AdvisorFeatureTests(AdvisorBase):
         self.assertGreater(rise, 6)
         self.assertTrue(any("BPFO" in row["name"] for row in evidence["lines"]))
 
+    def test_peak_levels_are_reported_in_mm_per_second(self):
+        advisor = self.learned()
+        self.run_samples(2, fault=True)
+        finding = next(f for f in self.cycle(advisor)["findings"] if f["kind"] == "spectrum")
+        self.assertEqual(finding["detail"]["unit"], "mm/s")
+        level = finding["detail"]["levels"][0]
+        self.assertGreater(level["now"], 2 * level["normal"])
+        self.assertIn("mm/s (", finding["message"])
+        evidence = json.loads((self.data / "ai" / "evidence" / f"{finding['evidence']}.json").read_text())
+        self.assertEqual((evidence["unit"], len(evidence["now"])), ("mm/s", len(evidence["freqs"])))
+
+    def test_sensors_on_one_machine_are_compared(self):
+        with closing(app.get_db_connection()) as conn, conn:
+            for ch, end, direction, velocity in (("1", "DE", "horizontal", 2.0), ("2", "DE", "axial", 2.6),
+                                                 ("3", "NDE", "horizontal", 0.8)):
+                historian.save_ai_channel(conn, "GW1", ch, {"machine": "Fan F-1", "machine_type": "motor",
+                                                            "power_kw": 22, "foundation": "rigid", "end": end,
+                                                            "direction": direction})
+                conn.execute("INSERT OR REPLACE INTO trends_latest (gateway_id,channel,metric_name,value,rpm,timestamp,"
+                             "context) VALUES (?,?,?,?,?,?,?)", ("GW1", ch, "Velocity", velocity, RPM, "2026-01-01",
+                                                                 json.dumps({"unit": "mm/s", "detection": "RMS"})))
+        report = self.cycle(self.advisor())
+        machine = next(f for f in report["findings"] if f["kind"] == "machine")
+        self.assertEqual((machine["gateway_id"], machine["channel"]), ("GW1", "2"))
+        self.assertIn("misalignment likely", machine["title"])
+        self.assertTrue(any("2.5 times the non-drive end" in note for note in machine["machine_notes"]))
+
     def test_each_new_finding_gets_an_evidence_folder(self):
         advisor = self.learned()
         self.run_samples(2, fault=True)
@@ -605,6 +632,22 @@ class LearningSampleTests(unittest.TestCase):
         counts = historian.prune_history(self.conn, now=datetime.fromtimestamp(received) + timedelta(hours=7),
                                          learning_hours=6)
         self.assertEqual(counts["learning_samples"], 2)
+
+
+class MachineViewTests(unittest.TestCase):
+    def point(self, ch, end, direction, velocity, part="motor"):
+        return {"gid": "G", "ch": ch, "part": part, "end": end, "direction": direction, "velocity": velocity}
+
+    def test_rules(self):
+        from machine_view import compare
+        notes = compare([self.point("1", "DE", "horizontal", 1.0), self.point("2", "DE", "vertical", 3.2),
+                         self.point("3", "DE", "axial", 1.1), self.point("4", "NDE", "horizontal", 0.4)])
+        kinds = {n["kind"]: n for n in notes}
+        self.assertEqual(kinds["vertical"]["supports"], "looseness")
+        self.assertTrue(kinds["vertical"]["strong"])
+        self.assertNotIn("axial", kinds)  # 1.1 against 3.2 radial is not high
+        self.assertEqual(kinds["end"]["supports"], "coupling side")
+        self.assertEqual(compare([self.point("1", "DE", "horizontal", 0.1), self.point("2", "DE", "axial", 0.2)]), [])
 
 
 class KnowledgeTests(unittest.TestCase):

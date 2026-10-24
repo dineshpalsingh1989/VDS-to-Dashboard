@@ -244,7 +244,7 @@ def finding_box(data_folder, gid, ch, compact=False):
         key = json.dumps([gid, ch, item.get("kind"), item.get("since_ms"), item.get("fault_id")])
         buttons = [dbc.Button(label, id={"type": "ai-feedback", "verdict": verdict, "key": key}, size="sm",
                               color=colour, outline=True, className="ms-1 mb-1", disabled=not admin)
-                   for verdict, label, colour in VERDICTS] if item.get("kind") != "severity" else []
+                   for verdict, label, colour in VERDICTS] if item.get("kind") not in ("severity", "machine") else []
         if compact:
             title = str(item.get("title", "AI finding"))
             short = title.split("likely ", 1)[1] if "likely " in title else title.split(": ", 1)[-1]

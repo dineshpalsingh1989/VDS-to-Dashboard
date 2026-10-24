@@ -39,7 +39,9 @@ from reports import Reports, atomic_json
 from storage import Storage, detect
 from symptoms import Knowledge, SpectrumView, diagnose, frequency_table
 
+from machine_view import compare as compare_machine
 from vds_dashboard.historian import ai_setup_missing  # learning.py puts the repository on sys.path
+from vds_dashboard.signals import spectrum_amplitude
 
 BATCH = 200
 CHANGE_Z = 4.0
@@ -406,7 +408,7 @@ class Advisor:
         state.update(phase="learning", samples=profile.n, last_ms=ms,
                      hours=round((profile.last_ms - profile.first_ms) / 3600_000, 1))
 
-    def spectral(self, gid, ch, kind, freqs, x, signature, rpm, ms, source):
+    def spectral(self, gid, ch, kind, freqs, x, signature, rpm, ms, source, sensor=None):
         """Shared learning and change detection for the normal and the envelope spectrum."""
         band = speed_band(rpm)
         state = self.store.state(gid, ch, kind)
@@ -421,7 +423,11 @@ class Advisor:
         normal = speed_tolerant(reference.mean, freqs)
         view = SpectrumView(freqs, x, normal, rpm, wave.get("features"), wave.get("normal"))
         z = reference.zscores(x, SPECTRUM_FLOOR, normal)
-        peaks = [(hz, rise) for i, hz, rise in view.changed_peaks(PEAK_RISE_DB) if z[i] >= CHANGE_Z]
+        found = [(i, hz, rise) for i, hz, rise in view.changed_peaks(PEAK_RISE_DB) if z[i] >= CHANGE_Z]
+        peaks = [(hz, rise) for _i, hz, rise in found]
+        # The same spectra in the unit people read: mm/s for acceleration sensors, g for envelope spectra
+        now_level, unit, axis = spectrum_amplitude(freqs, 10.0 ** x, sensor, envelope=kind == "envelope")
+        normal_level = spectrum_amplitude(freqs, 10.0 ** normal, sensor, envelope=kind == "envelope")[0]
         floor = {band_name: view.band_rise(band_name) for band_name in ("all", "upper")}
         changed = bool(peaks) or (source == "spectrum" and max(floor.values()) >= FLOOR_RISE_DB)
         # A slowly growing fault must not be learned bit by bit as "normal".
@@ -436,7 +442,9 @@ class Advisor:
             info = self.info(gid, ch)
             matches = self.recognise(gid, ch, kind, 10 * (x - normal)) + diagnose(
                 self.knowledge, view, info, source=source)
-            detail = {"peaks": [[round(hz, 2), round(rise, 1)] for hz, rise in peaks],
+            detail = {"peaks": [[round(hz, 2), round(rise, 1)] for hz, rise in peaks], "unit": unit,
+                      "levels": [{"hz": round(hz, 2), "now": float(f"{now_level[i]:.4g}"),
+                                  "normal": float(f"{normal_level[i]:.4g}")} for i, hz, _rise in found],
                       "floor_db": {k: round(v, 1) for k, v in floor.items()}, "rpm": rpm,
                       "matches": sorted(matches, key=lambda m: -m["confidence"])}
             if peaks:  # growth of the strongest changed peak, for the trend sentence
@@ -445,7 +453,8 @@ class Advisor:
                 del history[:-200]
         transition = self.observe(state, ms, changed, detail)
         self.after(gid, ch, kind, state, transition, ms,
-                   {"name": kind, "freqs": freqs, "current": x, "normal": normal})
+                   {"name": kind, "freqs": freqs, "current": x, "normal": normal, "now_level": now_level,
+                    "normal_level": normal_level, "unit": unit, "axis": axis})
 
     def recognise(self, gid, ch, kind, rise_db):
         """Compare a change with faults people confirmed before, on this or any other channel."""
@@ -468,7 +477,8 @@ class Advisor:
         x = spectrum_features(np.frombuffer(blob, "<f4"), lines)
         signature = settings_signature(context, "sensor_type", "sensitivity", "window",
                                        bandwidth=bandwidth, lines=lines)
-        self.spectral(gid, ch, "spectrum", bin_frequencies(bandwidth, lines), x, signature, rpm, ms, "spectrum")
+        self.spectral(gid, ch, "spectrum", bin_frequencies(bandwidth, lines), x, signature, rpm, ms, "spectrum",
+                      json.loads(context or "{}").get("sensor_type"))
 
     def waveform_sample(self, gid, ch, kind, ms, rpm, blob, fs, bandwidth, lines, context):
         values = np.frombuffer(blob, "<f4")
@@ -488,7 +498,8 @@ class Advisor:
         try:
             freqs, envelope = envelope_features(values, fs)
             state.pop("envelope_note", None)
-            self.spectral(gid, ch, "envelope", freqs, envelope, signature, rpm, ms, "envelope")
+            self.spectral(gid, ch, "envelope", freqs, envelope, signature, rpm, ms, "envelope",
+                          json.loads(context or "{}").get("sensor_type"))
         except ValueError as reason:
             state["envelope_note"] = str(reason)
         vector = waveform_vector(features)
@@ -668,6 +679,10 @@ class Advisor:
         detail = detail or {}
         data = {"gateway_id": gid, "channel": ch, "kind": kind, "created_ms": ms, "rpm": detail.get("rpm"),
                 "peaks": detail.get("peaks", [])}
+        if "now_level" in evidence:
+            data.update(unit=evidence["unit"], axis=evidence["axis"],
+                        now=[float(f"{v:.4g}") for v in evidence["now_level"]],
+                        normal_level=[float(f"{v:.4g}") for v in evidence["normal_level"]])
         if "freqs" in evidence:
             data.update(name=evidence.get("name", kind), freqs=np.round(evidence["freqs"], 3).tolist(),
                         current_db=np.round(10 * np.asarray(evidence["current"]), 2).tolist(),
@@ -691,9 +706,17 @@ class Advisor:
         severity, parts, title, fault_id = "info", [], "", None
         if kind in ("spectrum", "envelope"):
             rpm = d.get("rpm")
+            levels = {round(level["hz"], 2): level for level in d.get("levels", [])}
             for hz, rise in d["peaks"][:2]:
                 order = f" ({hz / (rpm / 60):.2f}x)" if rpm else ""
-                parts.append(f"peak at {hz:.1f} Hz{order} up {rise:.0f} dB")
+                level = levels.get(round(hz, 2))
+                if level and level["normal"] > 0 and not d.get("unit"):
+                    parts.append(f"peak at {hz:.1f} Hz{order} at {level['now'] / level['normal']:.1f}x its normal level")
+                elif level and level["normal"] > 0:
+                    parts.append(f"peak at {hz:.1f} Hz{order} up from {level['normal']:.3g} to {level['now']:.3g} "
+                                 f"{d.get('unit', '')} ({level['now'] / level['normal']:.1f}x normal)")
+                else:
+                    parts.append(f"peak at {hz:.1f} Hz{order} up {rise:.0f} dB")
             if kind == "spectrum" and d["floor_db"]["upper"] >= FLOOR_RISE_DB:
                 parts.append(f"high-frequency noise floor up {d['floor_db']['upper']:.0f} dB")
             what = "spectrum" if kind == "spectrum" else "envelope spectrum (bearing impacts)"
@@ -778,6 +801,47 @@ class Advisor:
                 "title": f"{label}: {trend['metric']} rising",
                 "message": f"{label}:" + self.trend_text(gid, ch) + " Plan an inspection before then."}
 
+    def machine_points(self):
+        """Sensors grouped by machine name, with where they sit and their overall velocity in mm/s."""
+        machines = {}
+        for (gid, ch), ui in self.ai.items():
+            if not self.channel_on(gid, ch):
+                continue
+            name = (ui.get("machine") or self.assets.get((gid, ch), {}).get("machine") or "").strip()
+            value, context = self.velocity.get((gid, ch), (None, None))
+            meta = json.loads(context or "{}")
+            if not name or value is None or meta.get("unit") != "mm/s":
+                continue
+            info = self.info(gid, ch)
+            machines.setdefault(name.lower(), {"name": name, "points": []})["points"].append({
+                "gid": gid, "ch": ch, "part": ui.get("machine_type") or info.get("machine_type"), "end": ui.get("end"),
+                "direction": str(ui.get("direction") or info.get("direction") or "").lower(), "velocity": float(value)})
+        return machines
+
+    def machine_findings(self, findings):
+        """Add what the machine's other sensors show to each finding, and report strong patterns on their own."""
+        reported = {(f.get("gateway_id"), f.get("channel")) for f in findings}
+        for machine in self.machine_points().values():
+            notes = compare_machine(machine["points"])
+            if not notes:
+                continue
+            members = {(p["gid"], p["ch"]) for p in machine["points"]}
+            for finding in findings:
+                if (finding.get("gateway_id"), finding.get("channel")) in members:
+                    finding["machine_notes"] = [n["text"] for n in notes]
+                    finding["message"] = finding.get("message", "") + " Across the machine: " + notes[0]["text"]
+            for note in notes:
+                gid, ch = note["channels"][0]
+                zone = self.zone(gid, ch, self.info(gid, ch))
+                if not note["strong"] or (gid, ch) in reported or zone not in ("B", "C", "D"):
+                    continue
+                reported.add((gid, ch))
+                findings.append({"severity": "warning" if zone in ("C", "D") else "info", "gateway_id": gid,
+                                 "channel": ch, "kind": "machine", "score": round(10 * note["ratio"], 1),
+                                 "title": f"{machine['name']}: {note['supports']} likely (sensors compared)",
+                                 "message": f"{machine['name']} ({gid} CH{ch}): {note['text']} Velocity is in ISO zone "
+                                            f"{zone}.", "machine_notes": [n["text"] for n in notes]})
+
     def progress(self, channels):
         rows = []
         for (gid, ch) in sorted(channels):
@@ -836,6 +900,7 @@ class Advisor:
                                  "score": value, "title": f"{info['name']}: ISO zone {zone}",
                                  "message": f"{info['name']} ({gid} CH{ch}): Velocity {value:.2f} mm/s is in ISO "
                                  f"zone {zone} ({'restricted operation' if zone == 'C' else 'damage likely'})."})
+        self.machine_findings(findings)
         findings.sort(key=lambda f: (f["severity"] != "warning", -f["score"]))
         for (gid, ch) in list(self.ai) + list(self.setup_needed):
             if self.channel_on(gid, ch):

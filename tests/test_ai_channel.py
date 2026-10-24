@@ -16,7 +16,8 @@ FINDING = {"gateway_id": "GW1", "channel": "1", "kind": "spectrum", "severity": 
            "fault_id": "bearing_outer_race", "evidence": "GW1_1_spectrum",
            "title": "Pump P-1 (GW1 CH1): likely Bearing outer race defect (6205-2RS)",
            "message": "Pump P-1 (GW1 CH1): spectrum changed from learned normal.",
-           "detail": {"rpm": 1485, "peaks": [[88.75, 14.2]], "floor_db": {"all": 0.5, "upper": 4.0},
+           "detail": {"rpm": 1485, "peaks": [[88.75, 14.2]], "floor_db": {"all": 0.5, "upper": 4.0}, "unit": "mm/s",
+                      "levels": [{"hz": 88.75, "now": 2.6, "normal": 0.42}],
                       "matches": [{"id": "bearing_outer_race", "name": "Bearing outer race defect", "confidence": 0.86,
                                    "evidence": ["peak at 3.59x running speed matches BPFO of 6205-2RS"],
                                    "advice": "Check the bearing at the next stop and plan a replacement."},
@@ -58,8 +59,12 @@ class SetupRuleTests(unittest.TestCase):
         self.assertEqual(ai_channel.headline(FINDING, "6205-2RS"), "The AI thinks the outer ring (outer race) of bearing "
                          "6205-2RS is starting to wear: very likely (86%).")
         lines = ai_channel.what_changed(FINDING)
-        self.assertIn("A peak at 88.8 Hz (5,325 CPM, 3.59x running speed) is 14 dB above normal", lines[0])
-        self.assertIn("about 5 times stronger than usual", lines[0])
+        self.assertIn("At 88.8 Hz (5,325 CPM, 3.59x running speed) the vibration went from 0.42 to 2.6 mm/s", lines[0])
+        self.assertIn("about 6 times normal", lines[0])
+        envelope = dict(FINDING, detail=dict(FINDING["detail"], unit="", levels=[{"hz": 88.75, "now": 32, "normal": 3.5}]))
+        self.assertIn("the bearing impact level is 9.1 times its normal level", ai_channel.what_changed(envelope)[0])
+        old = dict(FINDING, detail=dict(FINDING["detail"], levels=[]))
+        self.assertIn("14 dB above normal. That is about 5 times stronger than usual", ai_channel.what_changed(old)[0])
         self.assertIn("background noise at high frequency rose 4 dB", lines[1])
 
 
@@ -131,7 +136,7 @@ class ChannelCardTests(unittest.TestCase):
         self.assertIn("The VDS reports 1485 RPM now", json.dumps(opened["aim-speed-hint"]))
         values = {"machine": "Pump P-1", "location": "Motor DE", "machine_type": "pump", "power_kw": 22,
                   "foundation": "rigid", "speed_source": "vds", "fixed_rpm": None, "bearing": "6205-2RS",
-                  "direction": "horizontal", "line_frequency_hz": 50, "gear_teeth": None, "blades": 6}
+                  "direction": "horizontal", "line_frequency_hz": 50, "gear_teeth": 23, "blades": 6, "end": "DE"}
         state = [{"id": "ai-setup-target", "property": "data", "value": {"gid": "GW1", "ch": "1"}},
                  {"id": "aim-ai_on", "property": "value", "value": True}] + \
                 [{"id": "aim-" + key, "property": "value", "value": values[key]} for key in ai_channel.FIELDS]
@@ -140,6 +145,7 @@ class ChannelCardTests(unittest.TestCase):
         with closing(app.get_db_connection()) as conn:
             settings = historian.ai_channel_settings(conn, "GW1", "1")
             self.assertEqual((settings["iso_class"], settings["power_kw"]), ("group2_rigid", 22))
+            self.assertEqual((settings["end"], settings["blades"], settings["gear_teeth"]), ("DE", 6, None))
             self.assertTrue(historian.ai_enabled(conn, "GW1"))
         preview = self.ok(self.request("ai_setup_iso", [{"id": "aim-machine_type", "property": "value", "value": "pump"},
                                                         {"id": "aim-power_kw", "property": "value", "value": 22},
@@ -147,6 +153,53 @@ class ChannelCardTests(unittest.TestCase):
         self.assertIn("2.8", json.dumps(preview, ensure_ascii=False))
         self.assertEqual(self.request("ai_setup_save", [{"id": "aim-save", "property": "n_clicks", "value": 1}], state,
                                       viewer=True).status_code, 403)
+
+    def test_fields_follow_the_part_and_the_ai_switch_waits_for_the_setup(self):
+        hidden = {"display": "none"}
+        styles = lambda part: self.ok(self.request("ai_setup_fields", [
+            {"id": "aim-machine_type", "property": "value", "value": part}]))
+        self.assertEqual((styles("gearbox")["aim-gear-wrap"]["style"], styles("gearbox")["aim-blades-wrap"]["style"]),
+                         ({}, hidden))
+        self.assertEqual((styles("pump")["aim-gear-wrap"]["style"], styles("pump")["aim-blades-wrap"]["style"]),
+                         (hidden, {}))
+        self.assertEqual(styles("motor")["aim-blades-wrap"]["style"], hidden)
+
+        def ready(part, power, foundation, source="vds", rpm_value=None, ch="2"):
+            inputs = [{"id": "aim-" + k, "property": "value", "value": v} for k, v in (
+                ("machine_type", part), ("power_kw", power), ("foundation", foundation), ("speed_source", source),
+                ("fixed_rpm", rpm_value))]
+            return self.ok(self.request("ai_setup_ready", inputs, [{"id": "ai-setup-target", "property": "data",
+                                                                    "value": {"gid": "GW1", "ch": ch}}],
+                                        changed=["aim-power_kw.value"]))
+        locked = ready("pump", None, "rigid")
+        self.assertTrue(locked["aim-ai_on"]["disabled"])
+        self.assertFalse(locked["aim-ai_on"]["value"])
+        self.assertIn("the power (kW)", json.dumps(locked["aim-ai-hint"]))
+        self.assertIn("running speed", json.dumps(locked["aim-ai-hint"]))  # CH2 reports no speed
+        self.assertFalse(ready("pump", 22, "rigid", "fixed", 1480)["aim-ai_on"]["disabled"])
+        self.assertFalse(ready("pump", 22, "rigid", ch="1")["aim-ai_on"]["disabled"])  # CH1 reports 1485 RPM
+
+    def test_save_keeps_the_ai_off_while_details_are_missing(self):
+        values = dict.fromkeys(ai_channel.FIELDS)
+        values.update(machine_type="pump", speed_source="vds", line_frequency_hz=50)
+        state = [{"id": "ai-setup-target", "property": "data", "value": {"gid": "GW1", "ch": "1"}},
+                 {"id": "aim-ai_on", "property": "value", "value": True}] + \
+                [{"id": "aim-" + key, "property": "value", "value": values[key]} for key in ai_channel.FIELDS]
+        saved = self.ok(self.request("ai_setup_save", [{"id": "aim-save", "property": "n_clicks", "value": 1}], state))
+        self.assertIn("stays off", json.dumps(saved["aim-result"]))
+        with closing(app.get_db_connection()) as conn:
+            self.assertFalse(historian.ai_channel_settings(conn, "GW1", "1")["ai_on"])
+            self.assertFalse(historian.ai_enabled(conn, "GW1"))
+
+    def test_machine_drawing_places_each_channel(self):
+        rows = {("GW1", "1"): {"machine": "Pump P-1", "machine_type": "motor", "end": "NDE", "direction": "horizontal"},
+                ("GW1", "2"): {"machine": "pump p-1", "machine_type": "motor", "end": "DE", "direction": "horizontal"},
+                ("GW1", "4"): {"machine": "Other", "machine_type": "fan", "end": "DE", "direction": "axial"}}
+        drawing = json.dumps(ai_channel.machine_drawing(rows, ("GW1", "3"), {
+            "machine": "Pump P-1", "machine_type": "pump", "end": "DE", "direction": "axial"}).to_plotly_json(), default=str)
+        for text in ("CH1 H", "CH2 H", "CH3 A", "Motor", "Pump", "current"):
+            self.assertIn(text, drawing)
+        self.assertNotIn("CH4", drawing)  # another machine
 
     def test_bell_explains_the_finding_with_a_picture(self):
         self.write_report([FINDING])
@@ -156,13 +209,16 @@ class ChannelCardTests(unittest.TestCase):
         current[71] = -25.8  # 88.75 Hz
         with open(os.path.join(self.ai_folder, "evidence", "GW1_1_spectrum.json"), "w", encoding="utf-8") as stream:
             json.dump({"freqs": freqs, "current_db": current, "normal_db": normal, "peaks": [[88.75, 14.2]],
+                       "now": [0.42] * 71 + [2.6] + [0.42] * 328, "normal_level": [0.42] * 400, "unit": "mm/s",
+                       "axis": "Velocity (mm/s, from the acceleration spectrum)",
                        "lines": [{"name": "Outer race (BPFO)", "hz": 88.7, "order": 3.58, "used_for": "x"}]}, stream)
         inputs, changed = self.click("ai-bell")
         body = self.ok(self.request("ai_explain_open", inputs, changed=changed, viewer=True))
         self.assertTrue(body["ai-explain-modal"]["is_open"])
         text = json.dumps(body["ai-explain-body"], ensure_ascii=False)
         for words in ("Act soon", "outer ring (outer race)", "What the AI saw", "Why it thinks so", "What to do",
-                      "+14 dB", "Normal (learned)", "Outer race (BPFO)", "Mechanical looseness"):
+                      "0.42 → 2.6 mm/s", "Velocity (mm/s", "Normal (learned)", "Outer race (BPFO)",
+                      "Mechanical looseness"):
             self.assertIn(words, text)
         self.assertIn('"disabled": true', text)  # viewers see the feedback buttons but cannot press them
 

@@ -121,6 +121,8 @@ AI_MACHINE_TYPES = ("motor", "pump", "fan", "gearbox", "compressor", "other")
 AI_DIRECTIONS = ("radial", "horizontal", "vertical", "axial")
 AI_ISO_CLASSES = ("group1_rigid", "group1_flexible", "group2_rigid", "group2_flexible", "class1_small")
 AI_FOUNDATIONS = ("rigid", "flexible")
+AI_ENDS = ("DE", "NDE")  # drive end (coupling side) or non-drive end of the part the sensor is on
+GEAR_PARTS, BLADE_PARTS = ("gearbox",), ("pump", "fan")
 
 
 def iso_class_for(power_kw, foundation):
@@ -215,6 +217,10 @@ def save_ai_channel(conn, gid, channel, form):
         raise ValueError("Line frequency must be 50 or 60 Hz")
     previous = ai_channel_settings(conn, gid, channel)
     keep = lambda key, default=None: form[key] if key in form else previous.get(key, default)
+    end = keep("end") or ""  # the asset registry form has no end; keep the one set on the channel card
+    if end and end not in AI_ENDS:
+        raise ValueError("End must be DE (drive end) or NDE (non-drive end)")
+    text["end"] = end
     power_kw = keep("power_kw")
     power_kw = None if power_kw in (None, "") else float(power_kw)
     if power_kw is not None and not 0.05 <= power_kw <= 100000:
@@ -224,11 +230,17 @@ def save_ai_channel(conn, gid, channel, form):
         raise ValueError("Foundation must be rigid or flexible")
     if power_kw is not None and foundation and ("power_kw" in form or "foundation" in form or not text["iso_class"]):
         text["iso_class"] = iso_class_for(power_kw, foundation)
+    part = text["machine_type"]
+    gear_teeth = _optional_int(form.get("gear_teeth"), 1, 1000, "Gear teeth")
+    blades = _optional_int(form.get("blades"), 1, 100, "Blades or vanes")
+    if part and part not in GEAR_PARTS:
+        gear_teeth = None  # only a gearbox has a gear mesh
+    if part and part not in BLADE_PARTS:
+        blades = None  # only a pump or fan has a vane or blade pass
     settings = dict(
         text, speed_source=speed_source, fixed_rpm=fixed_rpm, line_frequency_hz=line, power_kw=power_kw,
         foundation=foundation, ai_on=bool(keep("ai_on", True)),
-        gear_teeth=_optional_int(form.get("gear_teeth"), 1, 1000, "Gear teeth"),
-        blades=_optional_int(form.get("blades"), 1, 100, "Blades or vanes"),
+        gear_teeth=gear_teeth, blades=blades,
     )
     if previous.get("relearn_at"):
         settings["relearn_at"] = previous["relearn_at"]

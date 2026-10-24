@@ -41,15 +41,15 @@ BPFO_6205 = 3.5848
 MARKER = ".vds-ai-demo"
 
 MACHINES = [
-    dict(gid="PUMP-STATION-1", ch="1", machine="Cooling pump P-101", location="Motor drive end", machine_type="motor",
+    dict(gid="PUMP-STATION-1", ch="1", machine="Cooling pump P-101", location="Motor drive end", machine_type="motor", end="DE",
          direction="horizontal", bearing="6205-2RS", rpm=1480, fault="bearing", power_kw=22, foundation="rigid"),
-    dict(gid="PUMP-STATION-1", ch="2", machine="Cooling pump P-101", location="Pump bearing", machine_type="pump",
+    dict(gid="PUMP-STATION-1", ch="2", machine="Cooling pump P-101", location="Pump bearing", machine_type="pump", end="DE",
          direction="horizontal", bearing="6203-2RS", blades=6, rpm=1480, fault=None, power_kw=22, foundation="rigid"),
-    dict(gid="PUMP-STATION-1", ch="3", machine="Cooling tower fan F-201", location="Fan bearing", machine_type="fan",
+    dict(gid="PUMP-STATION-1", ch="3", machine="Cooling tower fan F-201", location="Fan bearing", machine_type="fan", end="DE",
          direction="vertical", bearing="6205-2RS", blades=8, rpm=990, fault="unbalance", power_kw=22, foundation="rigid"),
-    dict(gid="PUMP-STATION-1", ch="4", machine="Cooling tower fan F-201", location="Motor drive end",
+    dict(gid="PUMP-STATION-1", ch="4", machine="Cooling tower fan F-201", location="Motor drive end", end="DE",
          machine_type="motor", direction="axial", rpm=990, fault=None, power_kw=22, foundation="rigid"),
-    dict(gid="CONVEYOR-2", ch="1", machine="Conveyor gearbox G-301", location="Input shaft", machine_type="gearbox",
+    dict(gid="CONVEYOR-2", ch="1", machine="Conveyor gearbox G-301", location="Input shaft", machine_type="gearbox", end="DE",
          direction="radial", gear_teeth=23, rpm=1460, fixed_speed=True, fault="looseness", power_kw=30, foundation="rigid"),
 ]
 
@@ -149,7 +149,7 @@ def main(argv=None):
             historian.save_ai_channel(conn, m["gid"], m["ch"], dict(
                 machine=m["machine"], location=m["location"], machine_type=m["machine_type"],
                 direction=m["direction"], bearing=m.get("bearing", ""), gear_teeth=m.get("gear_teeth"),
-                blades=m.get("blades"), power_kw=m["power_kw"], foundation=m["foundation"], line_frequency_hz=50,
+                blades=m.get("blades"), end=m.get("end", ""), power_kw=m["power_kw"], foundation=m["foundation"], line_frequency_hz=50,
                 speed_source="fixed" if m.get("fixed_speed") else "vds",
                 fixed_rpm=m["rpm"] if m.get("fixed_speed") else None))
     conn.close()

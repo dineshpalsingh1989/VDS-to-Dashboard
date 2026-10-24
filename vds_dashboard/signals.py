@@ -59,3 +59,22 @@ def waveform_stats(values):
     return {"rms": rms, "peak": peak, "peak_to_peak": float(x.max() - x.min()),
             "crest": peak / rms if rms else 0.0,
             "kurtosis": float(np.mean(x ** 4) / rms ** 4) if rms else 0.0}
+
+
+def spectrum_amplitude(freqs, power, sensor_type, envelope=False):
+    """Spectrum power in the unit people read: (amplitude, unit, axis title).
+
+    Acceleration in g becomes velocity in mm/s (ISO vibration severity is judged in mm/s).
+    A velocity sensor stays in mm/s. Envelope spectra have no physical unit (unit ""): read them
+    against their own learned normal.
+    """
+    power = np.abs(np.asarray(power, dtype=float))
+    sensor = str(sensor_type or "").lower()
+    accel = "accel" in sensor or sensor.endswith("(g)")
+    if envelope:
+        return np.sqrt(power), "", "Envelope level (bearing impacts, relative)"
+    if accel:
+        return velocity_from_acceleration(freqs, power), "mm/s", "Velocity (mm/s, from the acceleration spectrum)"
+    if "vel" in sensor:
+        return np.sqrt(power), "mm/s", "Velocity (mm/s)"
+    return np.sqrt(power), "sensor units", "Amplitude (sensor units)"
