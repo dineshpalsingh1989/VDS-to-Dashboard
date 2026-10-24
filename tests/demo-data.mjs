@@ -7,8 +7,10 @@ const demo=JSON.parse(await readFile(new URL('demo/snapshots.json',root),'utf8')
 
 test('all 14 application routes and the actual navigation are exported',()=>{
   assert.equal(Object.keys(demo.pages).length,14);
-  // Each route is in the menu, or a tab of the Settings page that the menu opens
-  for(const path of Object.keys(demo.pages)) assert(demo.shell.sidebar.includes(`href="${path}"`)||demo.pages[path].html.includes(`class="settings-tab active" href="${path}"`)||demo.pages[path].html.includes(`href="${path}" class="settings-tab active"`),path);
+  // Each route is in the menu, a tab of the Settings page, or (the analysis) opened from Home's channel cards
+  const fromHome=path=>path==='/diagnostics'&&demo.pages['/'].html.includes('analysis-overlay');
+  for(const path of Object.keys(demo.pages)) assert(demo.shell.sidebar.includes(`href="${path}"`)||demo.pages[path].html.includes(`class="settings-tab active" href="${path}"`)||demo.pages[path].html.includes(`href="${path}" class="settings-tab active"`)||fromHome(path),path);
+  assert(!demo.shell.sidebar.includes('href="/diagnostics"'));
   assert(demo.shell.header.includes('VDS-to-Dashboard'));
   for(const text of ['CH1','CH2','CH3','CH4','RPM','Real-time Trends','Sensor type:','Sensitivity:']) assert(demo.pages['/'].html.includes(text));
 });

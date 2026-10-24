@@ -29,7 +29,7 @@ from . import waveform_view
 
 READ_CALLBACKS = {"diag_tree_tab", "diag_measurements", "diag_measure_pick", "diag_tree", "diag_init", "diag_tree_pick", "diag_axis_options", "diag_select_channel",
                   "diag_overview", "diag_cell_pick", "diag_pick_time", "diag_trend", "diag_view_capture",
-                  "diag_bearing_load", "diag_download", "diag_bearing_matches", "diag_bearing_pick", "diag_wave_bar"}
+                  "diag_bearing_load", "diag_download", "diag_bearing_matches", "diag_bearing_pick", "diag_wave_bar", "analysis_toggle"}
 # (metric name in the historian, chip label, colour)
 METRICS = (("Acceleration", "Acc RMS", "#1f77b4"), ("Velocity", "Vel RMS", "#ff7f0e"),
            ("True Peak", "0-P", "#d62728"), ("Displacement", "Disp", "#9467bd"),
@@ -176,6 +176,33 @@ def page():
     ])
 
 
+def analysis_overlay():
+    """The analysis as a full-screen window on Home, opened by a channel card's Spectrum or Waveform button."""
+    return html.Div([
+        html.Div([
+            html.Strong(id="analysis-title", className="analysis-title"),
+            dbc.Button([html.I(className="fas fa-times me-1"), "Close"], id="analysis-close", color="light", size="sm",
+                       className="ms-auto", title="Back to Home"),
+        ], className="analysis-bar"),
+        dcc.Store(id="analysis-resize"),
+        page(),
+    ], id="analysis-overlay", className="analysis-overlay", style={"display": "none"},
+        role="dialog", **{"aria-modal": "true", "aria-labelledby": "analysis-title"})
+
+
+def live_capture(storage, gid, ch, kind):
+    """The latest spectrum or waveform the VDS sent, in the same form as a saved capture."""
+    channel = (storage or {}).get(gid, {}).get("channels", {}).get(ch, {})
+    data, context = channel.get(kind + "_data"), dict(channel.get(kind + "_context") or {})
+    if not data:
+        return None
+    context.setdefault("sensor_type", channel.get("sensor_type"))
+    return dict(timestamp_ms=context.get("timestamp_ms") or channel.get(kind + "_timestamp_ms"),
+                rpm=context.get("rpm") or channel.get("rpm"), values=np.asarray(data, dtype=float),
+                sampling_freq=context.get("sampling_freq"), bandwidth=context.get("bandwidth"),
+                lines=context.get("lines"), context=context, source="live now", live=True)
+
+
 # ---------------------------------------------------------------- figures
 def empty_figure(text, height=300):
     figure = go.Figure().update_layout(template="plotly_white", height=height, margin=dict(l=40, r=20, t=30, b=30),
@@ -241,7 +268,10 @@ def bearing_header(found):
 
 
 def capture_pill(capture, clicked_ms):
-    when = datetime.fromtimestamp(capture["timestamp_ms"] / 1000)
+    when = datetime.fromtimestamp((capture["timestamp_ms"] or time.time() * 1000) / 1000)
+    if capture.get("live"):
+        return [html.I(className="fas fa-circle me-2 live-dot"), html.Strong("Live now"),
+                html.Span(f" · {when:%d/%m/%Y, %H:%M:%S} · latest reading from the VDS", className="text-muted")]
     pill = [html.I(className="fas fa-circle me-2", style={"color": "#2a7fd4", "fontSize": ".6rem"}),
             html.Strong(f"{when:%d/%m/%Y, %H:%M:%S}"), html.Span(f" · {capture['source']}", className="text-muted")]
     if clicked_ms is not None:
@@ -267,7 +297,17 @@ def overall_value(conn, gid, ch, metric, at_ms):
 
 
 # ---------------------------------------------------------------- callbacks
-def register(app, get_connection, data_folder):
+def register(app, get_connection, data_folder, get_live=None):
+    def capture_for(conn, gid, ch, kind, selected_ms):
+        """No moment chosen: the live reading when it is newer than the last saved one. Else the nearest saved."""
+        if selected_ms:
+            return historian.nearest_capture(conn, gid, ch, kind, at_ms=selected_ms)
+        saved = historian.nearest_capture(conn, gid, ch, kind, None)
+        live = live_capture(get_live(), gid, ch, kind) if get_live else None
+        if live and (not saved or (live["timestamp_ms"] or 0) >= saved["timestamp_ms"]):
+            return live
+        return saved
+
 
     def gateways(conn):
         result = []
@@ -298,8 +338,12 @@ def register(app, get_connection, data_folder):
             times = historian.capture_times(conn, gid, ch, 0, int(time.time() * 1000) + 86_400_000)[-300:][::-1]
         if not times:
             return html.Small("No saved spectra for this channel yet.", className="text-muted mt-2 d-block")
-        nearest = min(times, key=lambda ms: abs(ms - selected_ms)) if selected_ms else times[0]
+        nearest = min(times, key=lambda ms: abs(ms - selected_ms)) if selected_ms else None
         items, day = [html.Div(f"CH{ch} · {len(times)} saved spectra", className="meas-head")], None
+        if get_live:  # the reading arriving now, before any saved one
+            items.append(html.Button([html.I(className="fas fa-circle me-2 live-dot"), "Live now"],
+                                     id={"type": "diag-meas", "ms": 0}, n_clicks=0,
+                                     className="tree-leaf" + ("" if selected_ms else " active")))
         for ms in times:
             moment = datetime.fromtimestamp(ms / 1000)
             if moment.date() != day:
@@ -539,6 +583,32 @@ def register(app, get_connection, data_folder):
                              className="text-warning")
         return html.Span(f"Saved {bearing or 'no bearing'} for {gid} CH{ch}.", className="text-success")
 
+    @app.callback([Output("analysis-overlay", "style"), Output("analysis-title", "children"),
+                   Output("diag-gateway", "data", allow_duplicate=True), Output("diag-axis", "value", allow_duplicate=True),
+                   Output("diag-view", "value"), Output("diag-time", "data", allow_duplicate=True)],
+                  [Input({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "n_clicks"),
+                   Input({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "n_clicks"),
+                   Input("analysis-close", "n_clicks")], prevent_initial_call=True)
+    def analysis_toggle(_spectrum, _waveform, _close):
+        """Spectrum or Waveform on a Home channel card opens the full analysis for that channel, live first."""
+        trigger = ctx.triggered_id
+        if not ctx.triggered or not ctx.triggered[0].get("value"):
+            return [no_update] * 6  # the cards were redrawn, nothing was pressed
+        if trigger == "analysis-close":
+            return [{"display": "none"}] + [no_update] * 5
+        gid, ch = trigger["gateway"], trigger["channel"]
+        view = "waveform" if trigger["type"] == "ch-wf-btn" else "spectrum"
+        title = [html.I(className="fas fa-wave-square me-2"), f"Analysis · {gid} CH{ch}"]
+        return {}, title, gid, ch, view, None
+
+    app.clientside_callback(
+        """function(style) { if (style && style.display !== 'none') {
+               setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 60);
+               setTimeout(function() { var plot = document.getElementById('diag-plot');
+                   if (plot) { plot.scrollIntoView({block: 'center'}); } }, 900); }
+           return window.dash_clientside.no_update; }""",
+        Output("analysis-resize", "data"), Input("analysis-overlay", "style"), prevent_initial_call=True)
+
     def speed_for(conn, gid, ch, capture, speed, unit):
         """Typed speed first, then the fixed speed set for the channel, the capture's speed or the live speed."""
         if speed:
@@ -557,13 +627,13 @@ def register(app, get_connection, data_folder):
     def spectrum_view(conn, gid, ch, selected_ms, quantity, tools, speed, unit):
         info, _settings = ai_views.machine_info(conn, gid, ch)
         if quantity == "envelope":
-            capture = historian.nearest_capture(conn, gid, ch, "waveform", selected_ms)
+            capture = capture_for(conn, gid, ch, "waveform", selected_ms)
             if not capture:
                 return None
             x, y = envelope_spectrum(capture["values"], capture["sampling_freq"])
             ylabel = "Envelope (device units)"
         else:
-            capture = historian.nearest_capture(conn, gid, ch, "spectrum", selected_ms)
+            capture = capture_for(conn, gid, ch, "spectrum", selected_ms)
             if not capture:
                 return None
             x, y = spectrum_xy(dict(spectrum_data=capture["values"].tolist(), bandwidth=capture["bandwidth"],
@@ -637,7 +707,7 @@ def register(app, get_connection, data_folder):
         return None, me
 
     def waveform_panel(conn, gid, ch, selected_ms, quantity, speed, unit, wave_tools, zoom, info):
-        capture = historian.nearest_capture(conn, gid, ch, "waveform", selected_ms)
+        capture = capture_for(conn, gid, ch, "waveform", selected_ms)
         if not capture:
             raise ValueError("No saved waveform for this channel yet.")
         fs = capture["sampling_freq"]
@@ -650,7 +720,8 @@ def register(app, get_connection, data_folder):
             if not partner:
                 raise ValueError("An orbit needs a horizontal and a vertical sensor at the same bearing. Set the "
                                  "machine, end and direction of both channels in the AI setup (gear on the channel).")
-            other = historian.nearest_capture(conn, partner[0], partner[1], "waveform", capture["timestamp_ms"])
+            other = (capture_for(conn, partner[0], partner[1], "waveform", None) if capture.get("live") else
+                     historian.nearest_capture(conn, partner[0], partner[1], "waveform", capture["timestamp_ms"]))
             if not other or abs(other["timestamp_ms"] - capture["timestamp_ms"]) > 1000 or not rpm:
                 raise ValueError(f"CH{partner[1]} has no waveform from the same moment (within 1 s) or no speed is "
                                  "known, so no orbit can be drawn.")
@@ -736,7 +807,7 @@ def register(app, get_connection, data_folder):
         gid, ch = json.loads(channel)
         kind = "waveform" if view == "waveform" else "spectrum"
         with closing(get_connection()) as conn:
-            capture = historian.nearest_capture(conn, gid, ch, kind, selected_ms)
+            capture = capture_for(conn, gid, ch, kind, selected_ms)
         if not capture:
             return no_update
         out = io.StringIO()

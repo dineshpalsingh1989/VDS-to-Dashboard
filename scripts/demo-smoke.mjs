@@ -24,7 +24,7 @@ try {
   const {call,evaluate,until}=browser;
   await call('Page.navigate',{url});
   await until('document.body?.dataset.demoReady === "/"');
-  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),8);
+  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),7);
   assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
   assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std deviation'));
   assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
@@ -38,11 +38,12 @@ try {
   await until(`Boolean(document.querySelector('[data-trend-channel="2"] .js-plotly-plot'))`);
   await evaluate(`const select=document.querySelector('[data-trend-channel="2"] select');select.value='Acceleration';select.dispatchEvent(new Event('change'))`);
   await until(`document.querySelector('[data-trend-channel="2"] .js-plotly-plot')?.layout?.title?.text === 'CH2 - Acceleration'`);
-  await evaluate(`Array.from(document.querySelectorAll('button')).find(el=>{try{return JSON.parse(el.id).type==='ch-wf-btn'}catch{return false}}).click()`);
-  await until('Boolean(document.querySelector("#demo-graph-modal .js-plotly-plot"))');
-  assert((await evaluate('document.querySelector("#demo-modal-title").textContent')).includes('Waveform'));
-  await evaluate('document.querySelector("#demo-graph-modal .btn-close").click()');
-  assert.equal(await evaluate('Boolean(document.querySelector("#demo-graph-modal"))'),false);
+  await evaluate(`Array.from(document.querySelectorAll('button')).find(el=>{try{const id=JSON.parse(el.id);return id.type==='ch-wf-btn'&&id.channel==='2'}catch{return false}}).click()`);
+  await until('document.body?.dataset.demoReady === "/diagnostics" && document.querySelector("#diag-view input[value=waveform]")?.checked');
+  await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.title?.text === "Waveform"');
+  assert.equal(await evaluate('document.querySelector("#diag-axis input:checked")?.value'),'2');
+  await evaluate('location.hash="/"');
+  await until('document.body?.dataset.demoReady === "/"');
   const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
   async function navigate(route) {
     await evaluate(`location.hash=${JSON.stringify(route)}`);

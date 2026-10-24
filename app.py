@@ -1212,7 +1212,6 @@ sidebar = html.Div([
     dbc.Nav([
         html.Div("Monitor", className="nav-section"),
         dbc.NavLink([html.I(className="fas fa-home me-2"), "Home"], href="/", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-wave-square me-2"), "Machine history"], href='/diagnostics', active='exact', className='text-white'),
         dbc.NavLink([html.I(className="fas fa-heartbeat me-2"), "Health Agents"], href="/health", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-bell me-2"), "Alarm management"], href='/alarms', active='exact', className='text-white'),
@@ -1500,7 +1499,7 @@ def create_datetime_settings_card():
         ])
     ], style={"boxShadow": "0 4px 12px rgba(0,0,0,0.1)", "border": "none", "borderRadius": "8px"})
 
-dashboard_layout = html.Div([html.Div(id="device-dashboard-container")])
+dashboard_layout = html.Div([html.Div(id="device-dashboard-container"), history_view.analysis_overlay()])
 
 device_info_layout = html.Div([
     dbc.Row(dbc.Col(html.H5("System Information")), className="mb-2 mt-2"),
@@ -1511,7 +1510,7 @@ device_info_layout = html.Div([
 
 content = html.Div(id="page-content", style={"marginLeft": "18rem", "padding": "2rem 1rem", "paddingTop": "5rem", "transition": "all 0.3s"})
 graph_modal = dbc.Modal([dbc.ModalHeader(id="modal-header"), dbc.ModalBody([
-    dcc.Store(id="modal-target"), html.Div(id="modal-ai"), html.Div(id="modal-feedback-result"),
+    dcc.Store(id="modal-target"), html.Div(id="modal-ai"),
     dcc.Graph(id="modal-graph", style={"height": "470px"}, config={"displaylogo": False}),
     ai_views.spectrum_controls(),  # IRIV Edge AI only; hidden elsewhere
     html.Div(id="modal-peak-table-container", className="mt-3")]),
@@ -1531,6 +1530,7 @@ app.layout = html.Div([
     dcc.Store(id='store-alarm-config-data'), dcc.Download(id="download-excel-component"),
     dcc.ConfirmDialog(id='confirm-restart-dialog', message='Are you sure you want to restart the application? This will apply all saved changes.'),
     header, sidebar, content, graph_modal, alarm_modal, *ai_channel.modals(),
+    html.Div(id="modal-feedback-result", className="feedback-toast", role="status"),
     dcc.Interval(id='live-refresh', interval=2000, n_intervals=0),
     dcc.Store(id='live-update-trigger'),
     dcc.Interval(id="system_info_interval", interval=5000, n_intervals=0),
@@ -1886,23 +1886,6 @@ def update_device_info(trigger_data):
         is_stale = freshness(storage_copy[gid])['status'] != 'fresh'
         items.append(dbc.ListGroupItem([dbc.Badge("Offline" if is_stale else "Online", color="danger" if is_stale else "success", className="me-2"), f"Serial: {gid} (Last Seen: {last})"], className="d-flex justify-content-between align-items-center"))
     return dbc.ListGroup(items, flush=True)
-
-@app.callback([Output("graph-modal", "is_open"), Output("modal-header", "children"), Output("modal-target", "data"), Output("modal-bearing", "value"), Output("modal-controls", "style")], [Input({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "n_clicks_timestamp"), Input("modal-close-btn", "n_clicks_timestamp")], [State({"type": "ch-wf-btn", "gateway": ALL, "channel": ALL}, "id"), State({"type": "ch-spec-btn", "gateway": ALL, "channel": ALL}, "id")], prevent_initial_call=True)
-def handle_graph_modal(wf_ts, spec_ts, close_ts, wf_ids, spec_ids):
-    if not ctx.triggered or ctx.triggered[0]['value'] is None: return [no_update]*5
-    wf_c = [t or 0 for t in wf_ts]; spec_c = [t or 0 for t in spec_ts]; close_c = close_ts or 0
-    max_wf = max(wf_c, default=0); max_spec = max(spec_c, default=0); max_open = max(max_wf, max_spec)
-    if close_c > max_open: return [False, no_update, no_update, no_update, no_update]
-    if max_wf > max_spec: cid = wf_ids[wf_c.index(max_wf)]; gtype = 'wf'
-    else: cid = spec_ids[spec_c.index(max_spec)]; gtype = 'spec'
-    gid, ch = cid['gateway'], cid['channel']
-    bearing, controls = "", {"display": "none"}
-    if gtype == 'spec' and historian.edge_ai_enabled():
-        with closing(get_db_connection()) as conn:
-            bearing = historian.ai_channel_settings(conn, gid, ch).get("bearing", "")
-        controls = {}
-    title = f"{'Waveform' if gtype == 'wf' else 'Spectrum'} - {gid} CH{ch}"
-    return [True, title, {"gid": gid, "ch": ch, "type": gtype}, bearing, controls]
 
 
 @app.callback([Output("modal-graph", "figure"), Output("modal-peak-table-container", "children"), Output("modal-info", "children"), Output("modal-ai", "children"), Output("modal-bearing-list", "children")], [Input("modal-target", "data"), Input("modal-bearing", "value"), Input("modal-families", "value"), Input("modal-harmonics", "value"), Input("modal-scale", "value")], prevent_initial_call=True)
@@ -2327,7 +2310,7 @@ def apply_asset_settings(gid, ch, settings):
 workspace_views.register(app, get_db_connection, get_live_snapshot, apply_asset_settings)
 ai_views.register(app, get_db_connection, DATA_FOLDER)
 ai_channel.register(app, get_db_connection, lambda: DATA_FOLDER, get_live_snapshot)
-history_view.register(app, get_db_connection, DATA_FOLDER)
+history_view.register(app, get_db_connection, DATA_FOLDER, get_live_snapshot)
 
 
 def maintenance_thread_func():

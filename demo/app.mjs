@@ -133,8 +133,11 @@ function setupDashboard() {
   main.querySelectorAll('button').forEach(button => {
     const id=pattern(button);
     if (id.type === 'ch-wf-btn' || id.type === 'ch-spec-btn') {
-      button.disabled=false;button.title='Inspect the sample capture';
-      button.addEventListener('click',()=>openModal(id.type==='ch-wf-btn'?'waveform':'spectrum',id.channel));
+      button.disabled=false;button.title='Open the analysis for this channel';
+      button.addEventListener('click',()=>{  // like the app: Spectrum or Waveform opens the full analysis, live first
+        channel=id.channel;historyView=id.type==='ch-wf-btn'?'waveform':'spectrum';historyMoment=null;
+        location.hash='/diagnostics';
+      });
     }
     if (button.classList.contains('accordion-button')) {
       button.disabled=false;button.removeAttribute('title');

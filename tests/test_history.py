@@ -317,12 +317,43 @@ class HistoryPageTests(unittest.TestCase):
             {"id": "diag-wave-zoom", "property": "value", "value": "all"}])
         self.assertIn("No saved spectrum", json.dumps(body["diag-plot"]["figure"]))
 
+    def test_home_buttons_open_the_analysis_on_the_live_reading(self):
+        now_ms = int(time.time() * 1000) + 5000
+        item = packet(now_ms / 1000, now_ms)
+        app.data_storage["GW1"] = {"rpm": 1480, "channels": {"1": {
+            "rpm": 1480, "sensor_type": "Acceleration(g)",
+            "spectrum_data": item["spectrum_data"], "spectrum_timestamp_ms": now_ms,
+            "spectrum_context": {"timestamp_ms": now_ms, "bandwidth": 1000, "lines": 800, "rpm": 1480,
+                                 "sensor_type": "Acceleration(g)"},
+            "waveform_data": item["waveform_data"], "waveform_timestamp_ms": now_ms,
+            "waveform_context": {"timestamp_ms": now_ms, "sampling_freq": 4096, "rpm": 1480,
+                                 "sensor_type": "Acceleration(g)"}}}}
+        self.addCleanup(app.data_storage.clear)
+        button = {"type": "ch-wf-btn", "gateway": "GW1", "channel": "1"}
+        opened = self.request("analysis_toggle", [
+            [], [{"id": button, "property": "n_clicks", "value": 1}],
+            {"id": "analysis-close", "property": "n_clicks", "value": None}],
+            changed=[json.dumps(button, separators=(",", ":"), sort_keys=True) + ".n_clicks"], viewer=True)
+        self.assertEqual(opened["analysis-overlay"]["style"], {})
+        self.assertEqual((opened["diag-gateway"]["data"], opened["diag-axis"]["value"], opened["diag-view"]["value"]),
+                         ("GW1", "1", "waveform"))
+        self.assertIn("Analysis · GW1 CH1", json.dumps(opened["analysis-title"], ensure_ascii=False))
+        live = self.view("spectrum")
+        self.assertIn("Live now", json.dumps(live["diag-capture-info"]))
+        saved = self.view("spectrum", at=self.first_ms)
+        self.assertNotIn("Live now", json.dumps(saved["diag-capture-info"]))
+        closed = self.request("analysis_toggle", [[], [], {"id": "analysis-close", "property": "n_clicks", "value": 1}],
+                              changed=["analysis-close.n_clicks"], viewer=True)
+        self.assertEqual(closed["analysis-overlay"]["style"], {"display": "none"})
+        self.assertNotIn("/diagnostics", str(app.sidebar))  # no separate menu entry any more
+
     def test_measurements_tab_lists_saved_spectra_and_opens_one(self):
         body = self.request("diag_measurements", [self.channel(), {"id": "diag-time", "property": "data", "value": None}],
                             viewer=True)
         text = json.dumps(body)
         self.assertIn("6 saved spectra", text)
-        self.assertEqual(text.count('"type": "diag-meas"'), 6)
+        self.assertEqual(text.count('"type": "diag-meas"'), 7)  # Live now, then the 6 saved ones
+        self.assertIn("Live now", text)
         pick = self.request("diag_measure_pick", [[{"id": {"type": "diag-meas", "ms": self.first_ms},
                                                     "property": "n_clicks", "value": 1}]],
                             changed=[json.dumps({"ms": self.first_ms, "type": "diag-meas"}, separators=(",", ":"))
