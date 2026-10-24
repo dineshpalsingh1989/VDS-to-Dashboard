@@ -1,9 +1,10 @@
 {
-  "about": "Overall vibration severity zones from ISO 20816-3 (formerly ISO 10816-3) for industrial machines above 15 kW, velocity RMS in mm/s over roughly 10-1000 Hz. Zone A: new machine. B: acceptable for long-term running. C: restricted, plan action. D: damaging. Only applied to channels whose iso_class is set in machines.json and whose Velocity is an RMS value in mm/s. Check the limits against your copy of the standard and your site rules.",
+  "about": "Overall vibration severity zones from ISO 20816-3 (formerly ISO 10816-3) for industrial machines above 15 kW, velocity RMS in mm/s over roughly 10-1000 Hz. Small machines up to 15 kW use ISO 10816-1 class I. Zone A: new machine. B: acceptable for long-term running. C: restricted, plan action. D: damaging. Only applied to channels whose iso_class is set (in the dashboard's AI setup or machines.json) and whose Velocity is an RMS value in mm/s. Check the limits against your copy of the standard and your site rules.",
   "classes": {
     "group1_rigid":    {"description": "Large machines 300 kW - 50 MW, rigid foundation",       "limits": [2.3, 4.5, 7.1]},
     "group1_flexible": {"description": "Large machines 300 kW - 50 MW, flexible foundation",     "limits": [3.5, 7.1, 11.0]},
     "group2_rigid":    {"description": "Medium machines 15 - 300 kW, rigid foundation",          "limits": [1.4, 2.8, 4.5]},
-    "group2_flexible": {"description": "Medium machines 15 - 300 kW, flexible foundation",       "limits": [2.3, 4.5, 7.1]}
+    "group2_flexible": {"description": "Medium machines 15 - 300 kW, flexible foundation",       "limits": [2.3, 4.5, 7.1]},
+    "class1_small":    {"description": "Small machines up to 15 kW (ISO 10816-1 class I)",       "limits": [0.71, 1.8, 4.5]}
   }
 }

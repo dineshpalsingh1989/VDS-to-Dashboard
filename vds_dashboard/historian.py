@@ -119,7 +119,42 @@ def save_rule(conn, gid, channel, rule):
 
 AI_MACHINE_TYPES = ("motor", "pump", "fan", "gearbox", "compressor", "other")
 AI_DIRECTIONS = ("radial", "horizontal", "vertical", "axial")
-AI_ISO_CLASSES = ("group1_rigid", "group1_flexible", "group2_rigid", "group2_flexible")
+AI_ISO_CLASSES = ("group1_rigid", "group1_flexible", "group2_rigid", "group2_flexible", "class1_small")
+AI_FOUNDATIONS = ("rigid", "flexible")
+
+
+def iso_class_for(power_kw, foundation):
+    """ISO vibration class from machine power and foundation.
+
+    Up to 15 kW: ISO 10816-1 class I. 15-300 kW: ISO 20816-3 group 2. Above 300 kW: group 1.
+    """
+    if power_kw in (None, "") or foundation not in AI_FOUNDATIONS:
+        return ""
+    power_kw = float(power_kw)
+    if power_kw < 15:
+        return "class1_small"
+    return f"group{2 if power_kw <= 300 else 1}_{foundation}"
+
+
+def ai_setup_missing(settings, rpm=None):
+    """What the AI still needs before it may learn a channel; empty when the setup is complete.
+
+    The AI needs the machine type, its ISO class (from power and foundation) and a running
+    speed: the VDS speed sensor must report one, or the user enters a fixed RPM.
+    """
+    settings = settings or {}
+    missing = []
+    if not settings.get("machine_type"):
+        missing.append("machine type")
+    if not settings.get("iso_class"):
+        missing.append("machine power and foundation (for the ISO class)")
+    fixed = settings.get("fixed_rpm")
+    if settings.get("speed_source") == "fixed":
+        if not fixed:
+            missing.append("fixed speed in RPM")
+    elif not (rpm and float(rpm) > 0) and not fixed:
+        missing.append("running speed: the VDS reports none, so enter a fixed RPM")
+    return missing
 
 
 def edge_ai_enabled():
@@ -179,8 +214,19 @@ def save_ai_channel(conn, gid, channel, form):
     if line not in (50, 60):
         raise ValueError("Line frequency must be 50 or 60 Hz")
     previous = ai_channel_settings(conn, gid, channel)
+    keep = lambda key, default=None: form[key] if key in form else previous.get(key, default)
+    power_kw = keep("power_kw")
+    power_kw = None if power_kw in (None, "") else float(power_kw)
+    if power_kw is not None and not 0.05 <= power_kw <= 100000:
+        raise ValueError("Machine power must be between 0.05 and 100000 kW")
+    foundation = keep("foundation") or ""
+    if foundation and foundation not in AI_FOUNDATIONS:
+        raise ValueError("Foundation must be rigid or flexible")
+    if power_kw is not None and foundation and ("power_kw" in form or "foundation" in form or not text["iso_class"]):
+        text["iso_class"] = iso_class_for(power_kw, foundation)
     settings = dict(
-        text, speed_source=speed_source, fixed_rpm=fixed_rpm, line_frequency_hz=line,
+        text, speed_source=speed_source, fixed_rpm=fixed_rpm, line_frequency_hz=line, power_kw=power_kw,
+        foundation=foundation, ai_on=bool(keep("ai_on", True)),
         gear_teeth=_optional_int(form.get("gear_teeth"), 1, 1000, "Gear teeth"),
         blades=_optional_int(form.get("blades"), 1, 100, "Blades or vanes"),
     )

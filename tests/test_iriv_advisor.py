@@ -166,6 +166,8 @@ class AdvisorTests(AdvisorBase):
 
     def test_unknown_bearing_still_flags_non_synchronous_peak(self):
         self.machines({})
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_channel(conn, "GW1", "1", {"machine_type": "motor", "iso_class": "group2_rigid"})
         advisor = self.advisor()
         self.run_samples(15)
         self.cycle(advisor)
@@ -179,6 +181,7 @@ class AdvisorTests(AdvisorBase):
         with closing(app.get_db_connection()) as conn, conn:
             historian.save_asset(conn, "GW1", "1", {"machine": "Fan F-1", "location": "DE bearing 6205-2RS",
                                                     "direction": "radial", "publish_interval": 60})
+            historian.save_ai_channel(conn, "GW1", "1", {"machine_type": "motor", "iso_class": "group2_rigid"})
         advisor = self.advisor()
         self.run_samples(15)
         self.cycle(advisor)
@@ -269,8 +272,8 @@ class AdvisorFeatureTests(AdvisorBase):
 
     def test_fixed_speed_entered_by_user_replaces_missing_speed_sensor(self):
         self.machines({})
-        advisor = self.learned(machine="Fan F-1", location="Motor DE", bearing="6205-2RS",
-                               speed_source="fixed", fixed_rpm=RPM, _rpm=None)
+        advisor = self.learned(machine="Fan F-1", location="Motor DE", bearing="6205-2RS", machine_type="fan",
+                               power_kw=22, foundation="rigid", speed_source="fixed", fixed_rpm=RPM, _rpm=None)
         self.run_samples(2, rpm=None, fault=True)
         [finding] = self.cycle(advisor)["findings"]
         self.assertIn("Fan F-1 / Motor DE (GW1 CH1)", finding["message"])
@@ -283,8 +286,48 @@ class AdvisorFeatureTests(AdvisorBase):
         advisor = self.advisor()
         self.run_samples(3, rpm=None)
         [row] = self.cycle(advisor)["progress"]
-        self.assertIn("Bearing 9999-XX is not in the bearing library", row["notes"][0])
-        self.assertIn("reports no speed", row["notes"][1])
+        # Without machine type, ISO class and speed the AI does not learn; it says what to enter.
+        self.assertEqual(row["phase"], "needs setup")
+        self.assertIn("machine type", row["notes"][0])
+        self.assertIn("enter a fixed RPM", row["notes"][0])
+        self.assertIn("Bearing 9999-XX is not in the bearing library", row["notes"][1])
+
+    def test_no_learning_until_machine_type_iso_class_and_speed_are_entered(self):
+        self.machines({})
+        advisor = self.advisor()
+        self.run_samples(15)
+        report = self.cycle(advisor)
+        [row] = report["progress"]
+        self.assertEqual(row["phase"], "needs setup")
+        self.assertEqual(row["missing"], ["machine type", "machine power and foundation (for the ISO class)"])
+        self.assertFalse(advisor.store.state("GW1", "1", "spectrum").get("phase"))  # nothing learned
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_channel(conn, "GW1", "1", {"machine_type": "pump", "power_kw": 7.5,
+                                                         "foundation": "rigid"})
+            self.assertEqual(historian.ai_channel_settings(conn, "GW1", "1")["iso_class"], "class1_small")
+        self.run_samples(15)
+        [row] = self.cycle(advisor)["progress"]
+        self.assertNotEqual(row["phase"], "needs setup")
+
+    def test_channel_ai_switch_off_skips_that_channel(self):
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_ai_channel(conn, "GW1", "1", {"ai_on": False})
+        advisor = self.advisor()
+        self.run_samples(15)
+        self.cycle(advisor)
+        self.assertFalse(advisor.store.state("GW1", "1", "spectrum").get("phase"))
+
+    def test_finding_publishes_evidence_for_the_dashboard_picture(self):
+        advisor = self.learned()
+        self.run_samples(2, fault=True)
+        finding = next(f for f in self.cycle(advisor)["findings"] if f["kind"] == "spectrum")
+        evidence = json.loads((self.data / "ai" / "evidence" / f"{finding['evidence']}.json").read_text())
+        self.assertEqual(len(evidence["freqs"]), len(evidence["current_db"]))
+        self.assertEqual(len(evidence["freqs"]), len(evidence["normal_db"]))
+        hz, rise = evidence["peaks"][0]
+        self.assertAlmostEqual(hz, BPFO_6205 * 25, delta=3)
+        self.assertGreater(rise, 6)
+        self.assertTrue(any("BPFO" in row["name"] for row in evidence["lines"]))
 
     def test_each_new_finding_gets_an_evidence_folder(self):
         advisor = self.learned()
@@ -446,7 +489,7 @@ class AdvisorLearningTests(AdvisorBase):
         self.machines({})
         with closing(app.get_db_connection()) as conn, conn:
             historian.save_ai_bearing(conn, "abc-77", {"bpfo": 3.5848, "bpfi": 5.4152, "bsf": 2.3568, "ftf": 0.3983})
-        advisor = self.learned(bearing="ABC-77")
+        advisor = self.learned(bearing="ABC-77", machine_type="motor", iso_class="group2_rigid")
         self.run_samples(2, fault=True)
         [finding] = self.cycle(advisor)["findings"]
         self.assertIn("Bearing outer race defect (ABC-77)", finding["message"])

@@ -56,18 +56,33 @@ bash iriv-edge/install.sh --image    # or pull the published container
 
 Then, in the dashboard:
 
-1. **Asset registry: set up each sensor.** Below the usual machine and location
-   fields is an **AI analysis** section. Switch the AI on for the VDS, then enter
-   the machine type, **bearing number**, gear teeth or blades, mains frequency and
-   ISO class. Typing a bearing number shows its defect frequencies in Hz straight
-   away. If the VDS has no speed sensor, choose **Fixed speed** and type the RPM.
-   A bearing that is not in the library can be added there too.
-2. **Dashboard: open a sensor's Spectrum.** The spectrum shows the fault frequency
-   lines (running speed, bearing, gear or blade pass, mains), the strongest peaks
-   with what each one matches, and the AI's finding for that sensor with the
-   Confirmed, Wrong and Repaired buttons. Change the bearing, harmonics or log scale
-   right there; "Save this bearing for the sensor" keeps it.
-3. **Health Agents** shows AI findings and learning progress for every sensor.
+1. **Home: set up each channel with its gear icon.** Every channel card shows a
+   small brain with what the AI is doing (AI off, Needs setup, Learning 40%,
+   Watching, or the fault it found) and a gear that opens the **AI setup**.
+   The AI will not learn a channel until it has three things:
+   - the **machine type** (motor, pump, fan, gearbox, compressor or other);
+   - the machine's **power in kW and its foundation** (rigid or flexible). These
+     give the ISO vibration class: up to 15 kW is ISO 10816-1 class I, 15-300 kW
+     is ISO 20816-3 group 2, above 300 kW is group 1. The window shows the zone
+     limits A to D in mm/s;
+   - a **running speed**: the VDS speed sensor must report one, or choose
+     **Fixed speed** and type the RPM.
+
+   The bearing number, direction, gear teeth, blades and mains frequency make the
+   diagnosis sharper. Saving with "AI on" also turns the AI on for that VDS. The
+   same settings are in the asset registry, where a missing bearing can be added.
+2. **The bell: why the AI thinks there is an issue.** When the AI has a finding,
+   a bell flashes on the channel. It opens a plain-language explanation: what the
+   AI thinks is wrong and how sure it is, what it saw (for example "a peak at
+   88.8 Hz is 14 dB above normal, about 5 times stronger than usual"), a picture
+   of the learned normal spectrum against today's with the changed peaks circled
+   and the matching fault frequency named, why it thinks so, what to do, and the
+   Confirmed, Wrong and Repaired buttons. Rising readings and ISO alarms show the
+   velocity trend over the ISO zones instead.
+3. **Dashboard: open a sensor's Spectrum.** The spectrum shows the fault frequency
+   lines (running speed, bearing, gear or blade pass, mains) and the strongest
+   peaks with what each one matches.
+4. **Health Agents** shows AI findings and learning progress for every sensor.
    **Reports and backups** lists the AI's report folders.
 
 Viewers can read everything, but only an administrator can change settings or

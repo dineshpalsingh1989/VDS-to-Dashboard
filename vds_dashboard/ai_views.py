@@ -36,6 +36,8 @@ LABELS = {
     "other": "Other", "group1_rigid": "Large, 300 kW–50 MW, rigid foundation",
     "group1_flexible": "Large, 300 kW–50 MW, flexible foundation",
     "group2_rigid": "Medium, 15–300 kW, rigid foundation", "group2_flexible": "Medium, 15–300 kW, flexible foundation",
+    "class1_small": "Small, up to 15 kW (ISO 10816-1 class I)",
+    "radial": "Radial", "horizontal": "Horizontal", "vertical": "Vertical", "axial": "Axial",
 }
 FAMILY_OPTIONS = [{"label": label, "value": key} for key, label, _c, _t in FAMILIES]
 _library_cache = {}

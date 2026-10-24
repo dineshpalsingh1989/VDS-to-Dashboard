@@ -39,6 +39,8 @@ from reports import Reports, atomic_json
 from storage import Storage, detect
 from symptoms import Knowledge, SpectrumView, diagnose, frequency_table
 
+from vds_dashboard.historian import ai_setup_missing  # learning.py puts the repository on sys.path
+
 BATCH = 200
 CHANGE_Z = 4.0
 PEAK_RISE_DB = 6.0
@@ -150,6 +152,7 @@ class Advisor:
         self.pending_ssd = None
         self.assets, self.velocity, self.ai, self.enabled, self.units = {}, {}, {}, set(), {}
         self.trends, self.trend_hour, self.tables_text = {}, None, None
+        self.setup_needed = {}  # (gid, ch) -> what the user still has to enter before the AI may learn it
         self.events = []
         root = self.storage.root()
         self.store = ProfileStore(root / "learning.db") if root.exists() else None
@@ -356,6 +359,21 @@ class Advisor:
     def info(self, gid, ch):
         return self.knowledge.machine(gid, ch, self.assets.get((gid, ch)), self.ai.get((gid, ch)))
 
+    def channel_on(self, gid, ch):
+        """The VDS switch is on and this channel's own AI switch is not turned off."""
+        return gid in self.enabled and self.ai.get((gid, ch), {}).get("ai_on", True) is not False
+
+    def blocked(self, gid, ch, rpm):
+        """True while the machine type, ISO class or running speed is missing: no learning without them."""
+        info, ui = self.info(gid, ch), self.ai.get((gid, ch), {})
+        missing = ai_setup_missing({"machine_type": info.get("machine_type"), "iso_class": info.get("iso_class"),
+                                    "speed_source": ui.get("speed_source"), "fixed_rpm": ui.get("fixed_rpm")}, rpm)
+        if missing:
+            self.setup_needed[(gid, ch)] = missing
+        else:
+            self.setup_needed.pop((gid, ch), None)
+        return bool(missing)
+
     @staticmethod
     def accepted(state, changed):
         """After 'wrong' feedback, the next few changed samples are learned as the new normal."""
@@ -371,7 +389,7 @@ class Advisor:
             "FROM learning_samples WHERE id > ? ORDER BY id LIMIT ?",
             (self.store.watermark("learning_samples"), BATCH)).fetchall()
         for row in rows:
-            if row[1] not in self.enabled:
+            if not self.channel_on(row[1], row[2]):
                 continue
             try:
                 if row[3] == "spectrum":
@@ -445,6 +463,8 @@ class Advisor:
 
     def spectrum_sample(self, gid, ch, kind, ms, rpm, blob, fs, bandwidth, lines, context):
         rpm = self.rpm_for(gid, ch, rpm)
+        if self.blocked(gid, ch, rpm):
+            return
         x = spectrum_features(np.frombuffer(blob, "<f4"), lines)
         signature = settings_signature(context, "sensor_type", "sensitivity", "window",
                                        bandwidth=bandwidth, lines=lines)
@@ -453,6 +473,8 @@ class Advisor:
     def waveform_sample(self, gid, ch, kind, ms, rpm, blob, fs, bandwidth, lines, context):
         values = np.frombuffer(blob, "<f4")
         rpm = self.rpm_for(gid, ch, rpm)
+        if self.blocked(gid, ch, rpm):
+            return
         features = waveform_features(values)
         state = self.store.state(gid, ch, "waveform")
         self.store.touch(gid, ch, "waveform")
@@ -508,7 +530,7 @@ class Advisor:
             "SELECT rowid, gateway_id, channel, metric_name, value, rpm, timestamp, context FROM trends "
             "WHERE rowid > ? ORDER BY rowid LIMIT ?", (mark, BATCH * 5)).fetchall()
         for rowid, gid, ch, metric, value, rpm, stamp, context in rows:
-            if gid not in self.enabled:
+            if not self.channel_on(gid, ch):
                 continue
             try:
                 if value is None or not math.isfinite(value) or value <= 0:
@@ -521,6 +543,8 @@ class Advisor:
         return len(rows)
 
     def metric_sample(self, gid, ch, metric, value, rpm, ms, context):
+        if self.blocked(gid, ch, rpm):
+            return
         kind = "metric:" + metric
         if metric in TREND_METRICS:
             self.store.add_hourly(gid, ch, metric, ms, value)
@@ -610,7 +634,7 @@ class Advisor:
             state["detail"] = detail
             state.setdefault("since_ms", ms)
         if not any(recent):
-            for key in ("since_ms", "detail", "report", "peak_history", "confirmed"):
+            for key in ("since_ms", "detail", "report", "peak_history", "confirmed", "evidence"):
                 state.pop(key, None)
         # Open after 2 of 3 changed samples; once open, stay open until 3 normal samples in a row.
         state["active"] = (sum(recent) >= 2 or (was and any(recent))) and "detail" in state
@@ -626,9 +650,38 @@ class Advisor:
                                                                          or self.rpm_for(gid, ch, None)))
             folder = self.reports.finding(finding, self.info(gid, ch), evidence, when=ms / 1000)
             state["report"] = str(folder)
+            state["evidence"] = self.publish_evidence(gid, ch, kind, finding.get("detail"), evidence, ms)
             self.events.append(f"New finding, report in {folder}: {finding['message'][:200]}")
         elif transition == "cleared":
             self.events.append(f"Cleared: {gid} CH{ch} {kind} is back to its learned normal.")
+        elif state.get("active") and state.get("evidence") and (state.get("recent") or [False])[-1] and evidence:
+            # Keep the dashboard's picture current while the change goes on (the report folder keeps the first one)
+            evidence = dict(evidence, frequencies=frequency_table(self.info(gid, ch), state.get("rpm")
+                                                                  or self.rpm_for(gid, ch, None)))
+            state["evidence"] = self.publish_evidence(gid, ch, kind, state.get("detail"), evidence, ms)
+
+    def publish_evidence(self, gid, ch, kind, detail, evidence, ms):
+        """A small copy of the evidence next to the dashboard, for the picture in its explanation window.
+
+        The report folders may live on the SSD; this file always sits in <data>/ai/evidence/.
+        """
+        detail = detail or {}
+        data = {"gateway_id": gid, "channel": ch, "kind": kind, "created_ms": ms, "rpm": detail.get("rpm"),
+                "peaks": detail.get("peaks", [])}
+        if "freqs" in evidence:
+            data.update(name=evidence.get("name", kind), freqs=np.round(evidence["freqs"], 3).tolist(),
+                        current_db=np.round(10 * np.asarray(evidence["current"]), 2).tolist(),
+                        normal_db=np.round(10 * np.asarray(evidence["normal"]), 2).tolist())
+        if "waveform" in evidence:
+            data["waveform"] = evidence["waveform"]
+        if "value" in detail:
+            data.update(value=detail["value"], normal=detail["normal"], unit=detail.get("unit", ""))
+        data["lines"] = [row for row in evidence.get("frequencies") or [] if row.get("hz")][:40]
+        name = "".join(c if c.isalnum() or c in "-_" else "_" for c in f"{gid}_{ch}_{kind}")
+        folder = self.local / "evidence"
+        folder.mkdir(exist_ok=True)
+        atomic_json(folder / f"{name}.json", data)
+        return name
 
     def describe(self, gid, ch, kind, state, now_ms):
         info = self.info(gid, ch)
@@ -704,6 +757,7 @@ class Advisor:
                                                            if "value" in d else 0])
         return {"severity": severity, "gateway_id": gid, "channel": ch, "kind": kind, "score": round(score, 1),
                 "title": title, "message": text, "since_ms": state.get("since_ms"), "report": state.get("report"),
+                "evidence": state.get("evidence"),
                 "fault_id": fault_id, "confirmed": bool(state.get("confirmed")), "detail": d}
 
     def zone(self, gid, ch, info):
@@ -738,6 +792,9 @@ class Advisor:
                 notes.append("This VDS reports no speed. Choose a fixed speed and enter the RPM.")
             if states.get("waveform", {}).get("envelope_note"):
                 notes.append(states["waveform"]["envelope_note"] + ".")
+            if (gid, ch) in self.setup_needed:
+                notes.insert(0, "The AI needs " + ", ".join(self.setup_needed[(gid, ch)]) + " before it can learn "
+                             "this sensor. Open the AI setup (gear icon) on the channel.")
             trend = self.trends.get((gid, ch))
             trend_text = "Not enough history yet"
             if trend:
@@ -745,8 +802,9 @@ class Advisor:
                               else f"{trend['metric']}: no steady rise")
                 if trend.get("days") is not None:
                     trend_text += f", {trend['target']} {in_days(trend['days'])}"
-            rows.append({"gateway_id": gid, "channel": ch, "name": info["name"],
-                         "phase": main.get("phase", "waiting for data"),
+            needs = self.setup_needed.get((gid, ch), [])
+            rows.append({"gateway_id": gid, "channel": ch, "name": info["name"], "missing": needs,
+                         "phase": "needs setup" if needs else main.get("phase", "waiting for data"),
                          "samples": main.get("samples"), "needed_samples": self.learn_samples,
                          "hours": main.get("hours"), "needed_hours": self.learn_hours, "trend": trend_text,
                          "changes": sum(1 for s in states.values() if s.get("active")), "notes": notes})
@@ -779,8 +837,8 @@ class Advisor:
                                  "message": f"{info['name']} ({gid} CH{ch}): Velocity {value:.2f} mm/s is in ISO "
                                  f"zone {zone} ({'restricted operation' if zone == 'C' else 'damage likely'})."})
         findings.sort(key=lambda f: (f["severity"] != "warning", -f["score"]))
-        for (gid, ch) in self.ai:
-            if gid in self.enabled:
+        for (gid, ch) in list(self.ai) + list(self.setup_needed):
+            if self.channel_on(gid, ch):
                 channels.setdefault((gid, ch), set())
         learning = sum(1 for p in channels.values() if "monitoring" not in p)
         if not self.enabled:
