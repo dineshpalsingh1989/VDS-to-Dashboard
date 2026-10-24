@@ -124,11 +124,18 @@ to record the operator's review. The screenshot's thresholds are demonstration v
 
 ### 3. Machine history: click any moment to see its spectrum
 
-Open **Machine history**, choose the VDS and a channel tab, and turn on the readings
-to plot (Acc RMS, Vel RMS, 0-P, displacement, crest factor, standard deviation), each
-on its own axis. Click anywhere on the history: the spectrum and waveform saved
-closest to that moment open below, with the time difference shown. Ticks under the
-history mark where saved spectra exist.
+Open **Machine history**. Pick a machine and channel in the tree (with search) or the
+channel tabs; the **Overall** table shows each channel's latest readings, and clicking
+a value plots it. Turn readings on with the coloured chips (Acc RMS, Vel RMS, 0-P,
+displacement, crest factor, standard deviation), each on its own axis, and zoom with
+the range slider. Click anywhere on the history: the spectrum and waveform saved
+closest to that moment open below, with the time difference shown. Ticks along the
+bottom of the history mark where saved spectra exist.
+
+Type the **bearing** at the measurement point (for example 6205-2RS) and its defect
+frequencies appear in the header and as lines on the spectrum. Type a **speed** in RPM
+or Hz to override the measured one; running-speed harmonics are marked with red
+diamonds. The toolbar switches log x, log y, harmonics, bearing lines and peaks.
 
 The dashboard saves one spectrum and one waveform per channel every 30 minutes and
 keeps them 90 days (`VDS_SNAPSHOT_INTERVAL_S`, `VDS_SNAPSHOT_RETENTION_DAYS`), in
@@ -137,8 +144,8 @@ spectrum in acceleration, velocity (derived from the g² spectrum) or envelope
 (computed from the waveform), the waveform with RMS, peak, crest factor and kurtosis,
 or a waterfall of recent spectra. Frequencies are labelled in Hz with CPM underneath,
 the strongest peaks are listed with their multiple of running speed, and each
-capture downloads as CSV. On IRIV Edge AI installs the spectrum also shows bearing
-and fault frequency lines and the AI's finding. **Save the live spectrum as this
+capture downloads as CSV. On IRIV Edge AI installs the AI's finding for the channel
+appears above the history. **Save the live spectrum as this
 channel's baseline** sets the reference for the Baseline health agent.
 
 ![Machine history: a clicked moment on the trend opens the spectrum saved closest to it](docs/images/machine-history.png)

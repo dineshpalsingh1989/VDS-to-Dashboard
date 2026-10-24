@@ -6,7 +6,8 @@ const $ = id => document.getElementById(id);
 const metrics = ['Velocity', 'Acceleration', 'Crest Factor', 'Displacement', 'True Peak', 'Std Deviation'];
 let channel = '1', modalFocus;
 let navigationVersion = 0, historyVersion = 0;
-let historyMoment = null, historyView = 'spectrum', historyQuantity = 'acceleration';
+let historyMoment = null, historyView = 'spectrum', historyQuantity = 'acceleration', historySpeed = null;
+const historyTools = new Set(['harmonics', 'bearing', 'peaks']);
 const historyMetrics = new Set(['Acceleration', 'Velocity']);
 const chips = {Acceleration:['Acc RMS','#1f77b4'], Velocity:['Vel RMS','#ff7f0e'], 'True Peak':['0-P','#d62728'],
   Displacement:['Disp','#9467bd'], 'Crest Factor':['CF','#8c564b'], 'Std Deviation':['Std dev','#e377c2']};
@@ -208,11 +209,39 @@ function enableRadios(selector, value, onChange) {
   });
   syncLabels(selector);
 }
+function selectHistoryChannel(ch) {
+  channel = ch; historyMoment = null;
+  main.querySelectorAll('#diag-axis input').forEach(input => { input.checked = input.value === ch; });
+  syncLabels('#diag-axis');
+  main.querySelectorAll('.tree-leaf').forEach(leaf => leaf.classList.toggle('active', pattern(leaf).ch === ch));
+  renderMachineHistory();
+}
 async function setupMachineHistory() {
-  const first = bank.channels['1'].asset;
-  options('diag-gateway', [{value: bank.gateway, label: `${first.machine} — ${bank.gateway}`}], bank.gateway);
-  options('diag-range', [{value: '1d', label: '1 day'}, {value: '7d', label: '1 week'}], '1d');
-  enableRadios('#diag-axis', channel, value => { channel = value; historyMoment = null; renderMachineHistory(); });
+  options('diag-range', [{value: '1d', label: '1 day'}, {value: '7d', label: '1 week'}, {value: 'max', label: 'Max'}], '1d');
+  enableRadios('#diag-axis', channel, value => selectHistoryChannel(value));
+  main.querySelectorAll('.tree-leaf').forEach(leaf => {
+    leaf.disabled = false; leaf.removeAttribute('title');
+    leaf.addEventListener('click', () => selectHistoryChannel(pattern(leaf).ch));
+  });
+  main.querySelectorAll('.overall-cell').forEach(cell => {
+    cell.disabled = false; cell.removeAttribute('title');
+    cell.addEventListener('click', () => {
+      const id = pattern(cell); historyMetrics.add(id.metric);
+      main.querySelectorAll('#diag-metrics input').forEach(input => { input.checked = historyMetrics.has(input.value); });
+      syncLabels('#diag-metrics'); selectHistoryChannel(id.ch);
+    });
+  });
+  main.querySelectorAll('#diag-tools input').forEach(input => {
+    input.disabled = false; input.removeAttribute('title'); input.checked = historyTools.has(input.value);
+    input.addEventListener('change', () => { input.checked ? historyTools.add(input.value) : historyTools.delete(input.value); syncLabels('#diag-tools'); renderCapture(); });
+  });
+  syncLabels('#diag-tools');
+  const speed = $('diag-speed');
+  if (speed) {
+    speed.readOnly = false; speed.removeAttribute('title');
+    speed.addEventListener('change', () => { historySpeed = Number(speed.value) > 0 ? Number(speed.value) : null; renderCapture(); });
+  }
+  enableRadios('#diag-speed-unit', 'rpm', () => renderCapture());
   enableRadios('#diag-view', historyView, value => { historyView = value; renderCapture(); });
   enableRadios('#diag-quantity', historyQuantity, value => { historyQuantity = value; renderCapture(); });
   main.querySelectorAll('#diag-metrics input').forEach(input => {
@@ -235,9 +264,9 @@ async function renderMachineHistory() {
     hovertemplate: `${chips[name][0]}: %{y:.4g} ${data.metadata[name]?.unit || ''}<extra></extra>`}));
   traces.push({x: data.captures.map(item => item.label), y: data.captures.map(() => 0.5), yaxis: 'y3', name: 'Saved spectra',
     type: 'scatter', mode: 'markers', marker: {symbol: 'line-ns-open', size: 12, color: '#1f3b73', line: {width: 2}}, hovertemplate: 'Saved spectrum<extra></extra>'});
-  const axis = name => ({title: {text: `${chips[name][0]} ${data.metadata[name]?.unit || ''}`, font: {color: chips[name][1]}}, tickfont: {color: chips[name][1]}, domain: [0.24, 1]});
+  const axis = name => ({title: {text: `${chips[name][0]} ${data.metadata[name]?.unit || ''}`, font: {color: chips[name][1]}}, tickfont: {color: chips[name][1]}, domain: [0, 1]});
   const layout = {template: 'plotly_white', height: 360, margin: {l: 60, r: 60, t: 30, b: 40}, hovermode: 'x unified', showlegend: false,
-    xaxis: {type: 'date'}, yaxis: names[0] ? axis(names[0]) : {domain: [0.24, 1]},
+    xaxis: {type: 'date', rangeslider: {visible: true, thickness: 0.07, bgcolor: '#f1f5f9'}}, yaxis: names[0] ? axis(names[0]) : {domain: [0, 1]},
     yaxis3: {domain: [0, 0.06], visible: false, range: [0, 1]}, shapes: [], annotations: []};
   if (names[1]) layout.yaxis2 = {...axis(names[1]), overlaying: 'y', side: 'right', showgrid: false};
   const capture = nearestCapture(data);
@@ -280,15 +309,23 @@ async function renderCapture(capture) {
   const hz = capture.spectrum_data.map((_, i) => i * capture.bandwidth / capture.lines);
   let y = capture.spectrum_data;
   if (historyQuantity === 'velocity') y = y.map((p, i) => hz[i] >= 2 ? Math.sqrt(Math.abs(p)) * 9806.65 / (2 * Math.PI * hz[i]) : 0);
-  const rpm = capture.rpm || bank.rpm, top = hz.at(-1), step = top / 10;
-  const ticks = Array.from({length: 11}, (_, i) => i * step);
-  await plot(graph, {data: [{x: hz, y, type: 'scatter', mode: 'lines', line: {color: '#1f3b73', width: 1.3}, hovertemplate: '%{x:.2f} Hz<br>%{y:.4g}<extra></extra>'}],
-    layout: {template: 'plotly_white', height: 460, title: {text: `Spectrum (${capture.label.replace('T', ' ').slice(0, 19)}) · ${rpm} RPM`},
-      xaxis: {title: {text: 'Frequency (Hz / CPM)'}, tickmode: 'array', tickvals: ticks, ticktext: ticks.map(t => `${Math.round(t)}<br>${Math.round(t * 60).toLocaleString('en')}`)},
-      yaxis: {title: {text: historyQuantity === 'velocity' ? 'Velocity (mm/s, derived from the g² spectrum)' : 'Published power spectrum (device units)'}},
-      shapes: [1, 2, 3].map(n => ({type: 'line', x0: n * rpm / 60, x1: n * rpm / 60, y0: 0, y1: 1, yref: 'paper', line: {dash: 'dot', color: '#6c757d'}})),
-      annotations: [1, 2, 3].map(n => ({x: n * rpm / 60, y: 1, yref: 'paper', text: `<b>${n}x</b>`, showarrow: false, xanchor: 'left', yanchor: 'top', font: {color: 'white', size: 10}, bgcolor: '#6c757d'}))}});
-  if (!peaks) return;
+  const unit = main.querySelector('#diag-speed-unit input:checked')?.value || 'rpm';
+  const rpm = historySpeed ? historySpeed * (unit === 'hz' ? 60 : 1) : (capture.rpm || bank.rpm);
+  const speedInput = $('diag-speed'); if (speedInput) speedInput.placeholder = `auto: ${capture.rpm || bank.rpm} RPM`;
+  const top = hz.at(-1), step = top / 10, ticks = Array.from({length: 11}, (_, i) => i * step);
+  const traces = [{x: hz, y, type: 'scatter', mode: 'lines', line: {color: '#1f77b4', width: 1.3}, hovertemplate: '%{x:.2f} Hz<br>%{y:.4g}<extra></extra>'}];
+  const shapes = [], annotations = [];
+  if (historyTools.has('harmonics') && rpm > 0) {
+    const harmonics = Array.from({length: 20}, (_, i) => (i + 1) * rpm / 60).filter(f => f <= top);
+    harmonics.forEach(f => shapes.push({type: 'line', x0: f, x1: f, y0: 0, y1: 1, yref: 'paper', line: {dash: 'dash', color: '#2647d6', width: 1}}));
+    const nearest = f => y[Math.round(f / (capture.bandwidth / capture.lines))] ?? 0;
+    traces.push({x: harmonics, y: harmonics.map(nearest), type: 'scatter', mode: 'markers', name: 'Harmonics', marker: {symbol: 'diamond', size: 9, color: '#e3262f', line: {color: 'white', width: 1}}, hovertemplate: '%{x:.2f} Hz<extra></extra>'});
+    annotations.push({x: harmonics[0], y: 1, yref: 'paper', text: `<b>${Math.round(rpm)} CPM</b><br>1x`, showarrow: false, xanchor: 'left', yanchor: 'top', align: 'left'});
+  }
+  await plot(graph, {data: traces, layout: {template: 'plotly_white', height: 470, showlegend: false, margin: {l: 60, r: 20, t: 20, b: 60}, shapes, annotations,
+      xaxis: historyTools.has('logx') ? {type: 'log', title: {text: 'Frequency (Hz)'}} : {title: {text: 'f [Hz + CPM]'}, tickmode: 'array', tickvals: ticks, ticktext: ticks.map(t => `${Math.round(t)}<br>${Math.round(t * 60).toLocaleString('en')}`)},
+      yaxis: {type: historyTools.has('logy') ? 'log' : 'linear', title: {text: historyQuantity === 'velocity' ? 'Velocity (mm/s, derived from the g² spectrum)' : 'Acceleration (published power spectrum, device units)'}}}});
+  if (!peaks || !historyTools.has('peaks')) return;
   const found = [];
   const floor = 0.03 * Math.max(...y);  // real peaks only, not noise bumps
   for (let i = 1; i < y.length - 1; i++) if (y[i] > floor && y[i] > y[i - 1] && y[i] >= y[i + 1]) found.push(i);

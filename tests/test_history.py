@@ -145,13 +145,16 @@ class HistoryPageTests(unittest.TestCase):
     def test_trend_shows_readings_and_saved_spectra_for_viewers(self):
         body = self.request("diag_trend", [self.channel(), {"id": "diag-metrics", "property": "value", "value": ["Velocity"]},
                                            {"id": "diag-range", "property": "value", "value": "7d"},
-                                           {"id": "diag-time", "property": "data", "value": self.first_ms}], viewer=True)
+                                           {"id": "diag-time", "property": "data", "value": self.first_ms},
+                                           {"id": "diag-trend-tools", "property": "value", "value": ["logy"]}], viewer=True)
         figure = body["diag-trend"]["figure"]
         names = [trace["name"] for trace in figure["data"]]
         self.assertEqual(names, ["Vel RMS", "Saved spectra"])
         self.assertEqual(len(figure["data"][0]["y"]), 48)
         self.assertEqual(len(figure["data"][1]["x"]), 6)
         self.assertEqual(figure["layout"]["hovermode"], "x unified")
+        self.assertTrue(figure["layout"]["xaxis"]["rangeslider"]["visible"])
+        self.assertEqual(figure["layout"]["yaxis"]["type"], "log")
         self.assertTrue(figure["layout"]["shapes"], "the clicked moment is marked")
 
     def test_click_picks_a_time_and_new_channel_resets_it(self):
@@ -162,28 +165,101 @@ class HistoryPageTests(unittest.TestCase):
         body = self.request("diag_pick_time", [click, self.channel()], changed=["diag-channel.data"])
         self.assertIsNone(body["diag-time"]["data"])
 
-    def view(self, view, quantity="acceleration", at=None, scale="linear"):
+    def test_tree_overall_table_and_picks(self):
+        with closing(app.get_db_connection()) as conn, conn:
+            historian.save_asset(conn, "GW1", "1", {"site": "Plant A", "machine": "Pump P-1", "location": "Motor DE",
+                                                    "direction": "radial", "publish_interval": 60})
+            conn.execute("INSERT INTO trends_latest (gateway_id,channel,metric_name,value,rpm,timestamp,context) "
+                         "VALUES (?,?,?,?,?,?,?)", ("GW1", "1", "Velocity", 1.47, 1480, datetime.now(),
+                                                    json.dumps({"unit": "mm/s"})))
+        tree = self.request("diag_tree", [{"id": "diag-search", "property": "value", "value": "motor"},
+                                          self.channel()], viewer=True)
+        text = json.dumps(tree, ensure_ascii=False)
+        self.assertIn("Pump P-1", text)
+        self.assertIn("CH1 · Motor DE", text)
+        self.assertIn("tree-leaf active", text)
+        empty = self.request("diag_tree", [{"id": "diag-search", "property": "value", "value": "zzz"}, self.channel()])
+        self.assertIn("No machine matches", json.dumps(empty))
+        overview = self.request("diag_overview", [self.channel(), {"id": "diag-metrics", "property": "value",
+                                                                   "value": ["Velocity"]}], viewer=True)
+        crumbs = json.dumps(overview["diag-breadcrumb"])
+        for part in ("Plant A", "GW1", "Pump P-1", "CH1"):
+            self.assertIn(part, crumbs)
+        self.assertIn("1.47", json.dumps(overview["diag-overall"]))
+        pick = self.request("diag_tree_pick", [[{"id": {"type": "diag-tree", "gid": "GW1", "ch": "1"},
+                                                 "property": "n_clicks", "value": 1}]],
+                            changed=['{"ch":"1","gid":"GW1","type":"diag-tree"}.n_clicks'])
+        self.assertEqual((pick["diag-gateway"]["data"], pick["diag-axis"]["value"]), ("GW1", "1"))
+        cell = self.request("diag_cell_pick", [[{"id": {"type": "diag-cell", "ch": "1", "metric": "Acceleration"},
+                                                 "property": "n_clicks", "value": 1}]],
+                            [{"id": "diag-metrics", "property": "value", "value": ["Velocity"]}],
+                            changed=['{"ch":"1","metric":"Acceleration","type":"diag-cell"}.n_clicks'])
+        self.assertEqual(cell["diag-metrics"]["value"], ["Velocity", "Acceleration"])
+
+    def view(self, view, quantity="acceleration", at=None, tools=("harmonics", "bearing", "peaks"), speed=None,
+             unit="rpm", viewer=True):
         return self.request("diag_view_capture", [
             self.channel(), {"id": "diag-time", "property": "data", "value": at},
             {"id": "diag-view", "property": "value", "value": view},
             {"id": "diag-quantity", "property": "value", "value": quantity},
-            {"id": "diag-scale", "property": "value", "value": scale}], viewer=True)
+            {"id": "diag-tools", "property": "value", "value": list(tools)},
+            {"id": "diag-speed", "property": "value", "value": speed},
+            {"id": "diag-speed-unit", "property": "value", "value": unit},
+            {"id": "diag-bearing-result", "property": "children", "value": None}], viewer=viewer)
 
-    def test_spectrum_nearest_to_click_with_hz_and_cpm_axis(self):
+    def test_spectrum_nearest_to_click_with_harmonics_and_cpm_axis(self):
         body = self.view("spectrum", at=self.first_ms + 60_000)
         figure = body["diag-plot"]["figure"]
-        self.assertIn("1480 RPM", figure["layout"]["title"]["text"])
+        self.assertEqual(figure["layout"]["xaxis"]["title"]["text"], "f [Hz + CPM]")
         self.assertIn("6,000", " ".join(figure["layout"]["xaxis"]["ticktext"]))  # 100 Hz = 6,000 CPM
+        harmonics = next(trace for trace in figure["data"] if trace.get("name") == "Harmonics")
+        self.assertEqual(harmonics["marker"]["symbol"], "diamond")
+        self.assertIn("1480 CPM", json.dumps(figure["layout"]["annotations"]))
         self.assertIn("1x", json.dumps(body["diag-peaks"]))
         self.assertIn("Nearest saved capture: 1 minute before", json.dumps(body["diag-capture-info"]))
+        self.assertIn("auto: 1480 RPM", body["diag-speed"]["placeholder"])
+        self.assertIn("No bearing set", json.dumps(body["diag-bearing"]))
+
+    def test_typed_speed_moves_the_harmonics(self):
+        figure = self.view("spectrum", speed=30, unit="hz")["diag-plot"]["figure"]
+        harmonics = next(trace for trace in figure["data"] if trace.get("name") == "Harmonics")
+        self.assertEqual(harmonics["x"][:2], [30.0, 60.0])
+        plain = self.view("spectrum", tools=())["diag-plot"]["figure"]
+        self.assertFalse(any(trace.get("name") in ("Harmonics", "Peaks") for trace in plain["data"]))
+
+    def test_bearing_typed_on_the_page_draws_its_lines_on_any_install(self):
+        with patch.dict(os.environ, {"VDS_EDGE_AI": "0"}):
+            saved = self.request("diag_bearing_save", [{"id": "diag-bearing-save", "property": "n_clicks", "value": 1}],
+                                 [self.channel(), {"id": "diag-bearing-input", "property": "value", "value": "6205ZZ"}])
+            self.assertIn("Saved 6205ZZ", json.dumps(saved))
+            body = self.view("spectrum")
+        header = json.dumps(body["diag-bearing"])
+        self.assertIn("6205-2RS", header)
+        self.assertIn("BPFO", header)
+        tags = json.dumps(body["diag-plot"]["figure"]["layout"]["annotations"])
+        self.assertIn("BPFO", tags)
+        with closing(app.get_db_connection()) as conn:
+            self.assertEqual(historian.ai_channel_settings(conn, "GW1", "1")["bearing"], "6205ZZ")
+        unknown = self.request("diag_bearing_save", [{"id": "diag-bearing-save", "property": "n_clicks", "value": 1}],
+                               [self.channel(), {"id": "diag-bearing-input", "property": "value", "value": "XYZ-1"}])
+        self.assertIn("not in the bearing library", json.dumps(unknown))
+
+    def test_viewer_cannot_save_a_bearing(self):
+        key = next(k for k, v in app.app.callback_map.items()
+                   if getattr(v.get("callback"), "__name__", "") == "diag_bearing_save")
+        with patch.dict(os.environ, {"VDS_ADMIN_PASSWORD": "a-test", "VDS_VIEWER_PASSWORD": "v-test"}):
+            response = self.client.post("/_dash-update-component", json={"output": key},
+                                        headers={"Authorization": "Basic " + base64.b64encode(b"viewer:v-test").decode()})
+        self.assertEqual(response.status_code, 403)
 
     def test_velocity_envelope_waveform_and_waterfall(self):
-        velocity = self.view("spectrum", "velocity")["diag-plot"]["figure"]
-        self.assertIn("Velocity (mm/s", velocity["layout"]["yaxis"]["title"]["text"])
+        velocity = self.view("spectrum", "velocity")
+        self.assertIn("Velocity (mm/s", velocity["diag-plot"]["figure"]["layout"]["yaxis"]["title"]["text"])
+        self.assertIn("Vel RMS", json.dumps(velocity["diag-rms"]))
         envelope = self.view("spectrum", "envelope")["diag-plot"]["figure"]
-        self.assertTrue(envelope["layout"]["title"]["text"].startswith("Envelope spectrum"))
+        self.assertEqual(envelope["layout"]["yaxis"]["title"]["text"], "Envelope (device units)")
         waveform = self.view("waveform")
-        self.assertIn("Crest factor 1.41", json.dumps(waveform["diag-capture-info"]))
+        self.assertIn("CF 1.41", json.dumps(waveform["diag-rms"]))
         waterfall = self.view("waterfall")["diag-plot"]["figure"]
         self.assertEqual(waterfall["data"][0]["type"], "heatmap")
         self.assertEqual(len(waterfall["data"][0]["z"]), 6)
@@ -194,7 +270,10 @@ class HistoryPageTests(unittest.TestCase):
             {"id": "diag-time", "property": "data", "value": None},
             {"id": "diag-view", "property": "value", "value": "spectrum"},
             {"id": "diag-quantity", "property": "value", "value": "acceleration"},
-            {"id": "diag-scale", "property": "value", "value": "linear"}])
+            {"id": "diag-tools", "property": "value", "value": []},
+            {"id": "diag-speed", "property": "value", "value": None},
+            {"id": "diag-speed-unit", "property": "value", "value": "rpm"},
+            {"id": "diag-bearing-result", "property": "children", "value": None}])
         self.assertIn("No saved spectrum", json.dumps(body["diag-plot"]["figure"]))
 
     def test_baseline_button_still_saves_the_live_spectrum(self):

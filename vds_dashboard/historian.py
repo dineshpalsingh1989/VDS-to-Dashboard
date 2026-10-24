@@ -190,6 +190,17 @@ def save_ai_channel(conn, gid, channel, form):
     return settings
 
 
+def save_channel_bearing(conn, gid, channel, bearing):
+    """The bearing fitted at a measurement point, for spectrum fault lines (all installs)."""
+    if channel not in ("1", "2", "3", "4") or not gid:
+        raise ValueError("Invalid channel")
+    bearing = str(bearing or "").strip()[:64]
+    settings = ai_channel_settings(conn, gid, channel)
+    settings["bearing"] = bearing
+    conn.execute("INSERT OR REPLACE INTO ai_settings VALUES (?,?,?)", (gid, channel, json.dumps(settings)))
+    return bearing
+
+
 def request_ai_relearn(conn, gid, channel, now=None):
     """Ask the advisor to forget a channel, for example after a repair."""
     settings = ai_channel_settings(conn, gid, channel)

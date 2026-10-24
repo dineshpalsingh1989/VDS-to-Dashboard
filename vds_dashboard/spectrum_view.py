@@ -34,7 +34,25 @@ def add_cpm_axis(figure, top):
                         title="Frequency (Hz / CPM)")
 
 
-def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, log=False):
+def add_harmonic_markers(figure, x, y, rpm, top, count=20):
+    """Running-speed harmonics: dashed lines with a red diamond on the trace, and a CPM label at 1x."""
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    shaft = rpm / 60
+    hz = [k * shaft for k in range(1, count + 1) if k * shaft <= top]
+    if not hz or x.size == 0:
+        return
+    for k, f in enumerate(hz, start=1):
+        figure.add_vline(x=f, line=dict(color="#2647d6", width=1, dash="dash"), opacity=0.75)
+    values = [float(y[int(np.argmin(np.abs(x - f)))]) for f in hz]
+    figure.add_trace(go.Scatter(x=hz, y=values, mode="markers", name="Harmonics",
+                                marker=dict(symbol="diamond", size=9, color="#e3262f", line=dict(color="white", width=1)),
+                                text=[f"{k}x" for k in range(1, len(hz) + 1)],
+                                hovertemplate="%{text}: %{x:.2f} Hz<extra></extra>"))
+    figure.add_annotation(x=hz[0], y=1, yref="paper", text=f"<b>{rpm:.0f} CPM</b><br>1x", showarrow=False,
+                          xanchor="left", yanchor="top", align="left", font=dict(size=11, color="#203047"))
+
+
+def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, log=False, key_box=True):
     """Returns (figure, peak rows). info carries bearing, gear, blade and mains data for the lines."""
     x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
     orders = x * 60 / rpm if rpm else None
@@ -59,7 +77,7 @@ def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, 
                                   bgcolor=colour, bordercolor=colour, borderpad=2, opacity=0.95)
             labelled += 1
             key.append(f'<span style="color:{colour}">■</span> {name} {hz:.1f} Hz')
-    if key:  # colour key in the top-right corner
+    if key and key_box:  # colour key in the top-right corner
         figure.add_annotation(x=0.995, y=0.985, xref="paper", yref="paper", xanchor="right", yanchor="top",
                               align="left", showarrow=False, text="<br>".join(key), font=dict(size=10, color="#203047"),
                               bgcolor="rgba(255,255,255,0.92)", bordercolor="#cbd5e1", borderwidth=1, borderpad=6)

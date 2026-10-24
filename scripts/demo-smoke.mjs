@@ -23,7 +23,7 @@ try {
   browser=await openBrowser();
   const {call,evaluate,until}=browser;
   await call('Page.navigate',{url});
-  await until('document.body.dataset.demoReady === "/"');
+  await until('document.body?.dataset.demoReady === "/"');
   assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
   assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
   assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std deviation'));
@@ -46,7 +46,7 @@ try {
   const routes=['/health','/assets','/alarms','/diagnostics','/reports','/device','/data-storage','/history','/debug','/mqtt','/ethernet','/modbus','/opcua'];
   async function navigate(route) {
     await evaluate(`location.hash=${JSON.stringify(route)}`);
-    try { await until(`document.body.dataset.demoReady === ${JSON.stringify(route)}`); }
+    try { await until(`document.body?.dataset.demoReady === ${JSON.stringify(route)}`); }
     catch(error) { console.log("Browser errors:", browser.errors); throw error; }
   }
   for(const route of routes) {
@@ -62,7 +62,8 @@ try {
   }
   await navigate('/diagnostics');
   await until('document.querySelector("#diag-trend .js-plotly-plot")?.data?.some(trace => trace.name === "Saved spectra")');
-  await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.xaxis?.title?.text === "Frequency (Hz / CPM)"');
+  await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.xaxis?.title?.text === "f [Hz + CPM]"');
+  await until('document.querySelector("#diag-plot .js-plotly-plot")?.data?.some(trace => trace.name === "Harmonics")');
   await evaluate('const p=document.querySelector("#diag-trend .js-plotly-plot");p.emit("plotly_click",{points:[{x:p.data[0].x[2]}]})');
   await until('document.querySelector("#diag-capture-info").textContent.includes("moment you clicked")');
   await until('document.querySelector("#diag-trend .js-plotly-plot")?.layout?.shapes?.length === 1');
@@ -71,6 +72,11 @@ try {
     const image=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
     await writeFile(process.env.DEMO_DIAGNOSTICS_SCREENSHOT,Buffer.from(image.data,'base64'));
   }
+  await evaluate('const s=document.querySelector("#diag-speed");s.value="1800";s.dispatchEvent(new Event("change"))');
+  await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.annotations?.[0]?.text?.includes("1800 CPM")');
+  await evaluate('document.querySelectorAll(".tree-leaf")[1].click()');
+  await until('document.querySelectorAll(".tree-leaf")[1].classList.contains("active")');
+  await evaluate('document.querySelectorAll(".tree-leaf")[0].click()');
   await evaluate('document.querySelector("#diag-quantity input[value=velocity]").click()');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.yaxis?.title?.text?.startsWith("Velocity")');
   await evaluate('document.querySelector("#diag-view input[value=waveform]").click()');

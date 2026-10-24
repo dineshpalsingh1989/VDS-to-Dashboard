@@ -171,3 +171,50 @@ input:focus-visible, select:focus-visible { outline: 2px solid #126b82; outline-
 .metric-chips .form-check:nth-child(6) { --chip: #e377c2; }
 .bearing-header { font-size: .85rem; font-variant-numeric: tabular-nums; }
 #diag-trend, #diag-plot { margin-top: .5rem; }
+
+/* ---------------------------------------------------------------- machine history, analysis layout */
+.mh-breadcrumb { font-size: .95rem; color: #64748b; margin: -.25rem 0 .9rem; }
+.mh-breadcrumb .crumb.current { color: var(--vds-ink); font-weight: 650; }
+.mh-breadcrumb .crumb-sep { color: #b6c2d1; margin: 0 .15rem; }
+.mh-panel { background: #fff; border: 1px solid var(--vds-border); border-radius: 14px; padding: .8rem; position: sticky; top: 5rem;
+  max-height: calc(100vh - 6rem); overflow-y: auto; }
+.mh-tree { font-size: .9rem; }
+.tree-site { font-weight: 650; padding: .3rem .25rem; color: var(--vds-ink); }
+.tree-icon { color: #16a34a; }
+.tree-node { margin: .15rem 0 .15rem .6rem; }
+.tree-node > summary { cursor: pointer; padding: .3rem .25rem; border-radius: 6px; list-style-position: outside; }
+.tree-node > summary:hover { background: #f1f5f9; }
+.tree-leaves { display: flex; flex-direction: column; margin-left: 1.1rem; }
+.tree-leaf { display: flex; align-items: center; gap: .45rem; border: 0; background: none; text-align: left; padding: .32rem .5rem;
+  border-radius: 6px; color: #334155; font-size: .86rem; }
+.tree-leaf:hover { background: #f1f5f9; }
+.tree-leaf.active { background: #e2e8f0; font-weight: 650; color: var(--vds-ink); }
+.tree-dot { display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: #94a3b8; flex: none; }
+.tree-dot.ok { background: #22c55e; } .tree-dot.off { background: #ef4444; }
+.mh-card { background: #fff; border: 1px solid var(--vds-border); border-radius: 14px; padding: .9rem 1rem; margin-bottom: .9rem;
+  box-shadow: 0 1px 4px #2030470a; }
+.overall-table th { font-size: .72rem; color: #64748b; font-weight: 650; text-align: center; background: transparent !important; }
+.overall-table th:first-child, .mh-row-label { text-align: left; font-weight: 650; font-size: .85rem; white-space: nowrap; }
+.overall-table td { text-align: center; padding: .25rem .3rem !important; }
+.overall-cell { border: 1px solid var(--vds-border); background: #fff; border-radius: 8px; padding: .3rem .8rem; min-width: 5.5rem;
+  font-variant-numeric: tabular-nums; font-weight: 650; font-size: .85rem; color: #334155; }
+.overall-cell:hover { border-color: #93c5fd; }
+.overall-cell.active { background: #e8f1fd; border-color: #2a7fd4; color: #1d4f8f; }
+.mh-channel-name { font-size: .95rem; }
+.axis-tabs .btn { min-width: 4.2rem; }
+.mh-controls { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-bottom: .6rem; }
+.mh-speed { width: auto; }
+.mh-speed .input-group-text { background: transparent; border: 0; font-weight: 650; color: var(--vds-ink); }
+.tool-toggles { display: inline-flex; gap: .2rem; }
+.tool-toggles .form-check { margin: 0; padding: 0; }
+.tool-btn { border: 1px solid transparent; background: transparent; color: #42566d; padding: .3rem .55rem; border-radius: 7px; }
+.tool-btn:hover { background: #f1f5f9; }
+.tool-btn.active, .btn-check:checked + .tool-btn { background: #dbeafe; color: #1d4f8f; border-color: #bfdbfe; }
+.tool-text { font-style: italic; font-weight: 700; font-family: Georgia, serif; font-size: .85rem; }
+.capture-pill { background: #f1f5f9; border-radius: 10px; padding: .35rem .7rem; font-size: .9rem; }
+.mh-rms { font-size: .92rem; font-variant-numeric: tabular-nums; }
+.bearing-header { font-size: .9rem; font-variant-numeric: tabular-nums; }
+.mh-bearing-edit { margin: .3rem 0 .2rem; }
+.mh-bearing-edit summary { cursor: pointer; color: #126b82; }
+.mh-range { min-width: 8.5rem; }
+@media (max-width: 991px) { .mh-panel { position: static; max-height: none; } }

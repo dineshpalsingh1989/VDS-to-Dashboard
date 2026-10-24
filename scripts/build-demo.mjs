@@ -66,7 +66,7 @@ try {
     if(path==='/alarms') await choose('rule-channel');
     if(path==='/diagnostics') {
       await until('document.querySelector("#diag-trend .js-plotly-plot")?.data?.length > 0');
-      await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.title?.text?.startsWith("Spectrum")');
+      await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.xaxis?.title?.text === "f [Hz + CPM]"');
     }
     if(path==='/history') {
       await evaluate('document.getElementById("load-history-btn").click()');
