@@ -41,8 +41,8 @@ def pending_banner(conn):
         return None
     names = ", ".join(d["gateway_id"] for d in waiting[:3]) + (" and more" if len(waiting) > 3 else "")
     return dbc.Alert([html.I(className="fas fa-plug me-2"),
-                      html.Strong(f"New VDS130 found: {names}."), " ",
-                      "It is not used until you allow it. ",
+                      html.Strong(f"New VDS130 found: {names}."),
+                      html.Span("It is not used until you allow it.", className="ms-1"),
                       dbc.Button("Open VDS130", href="/assets", color="warning", size="sm", className="ms-2")],
                      color="warning", className="d-flex align-items-center flex-wrap", id="devices-banner")
 
