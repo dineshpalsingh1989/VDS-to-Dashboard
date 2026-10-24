@@ -259,3 +259,34 @@ body { background: #f5f5f5; }
 .ai-line-buttons .btn { padding: .05rem .45rem; font-size: .75rem; margin: 0 0 0 .25rem !important; }
 /* Dash 4 dropdowns keep a hidden focus input that pokes past the right edge; never scroll sideways for it */
 #page-content { overflow-x: clip; }
+
+/* Asset tree: machine > device serial number > channels */
+.tree-device { margin-left: 1.1rem; }
+.tree-device > summary { font-size: .88rem; }
+.tree-axis { font-size: .75rem; opacity: .8; }
+
+/* Settings: one menu entry, a tab per service or system page */
+.settings-title { font-size: 1.35rem; font-weight: 650; margin-bottom: .75rem; }
+.settings-tabs { display: flex; flex-wrap: wrap; gap: .25rem; padding: .25rem; margin-bottom: 1rem; border-radius: 10px;
+  background: #ececec; width: fit-content; max-width: 100%; }
+.settings-tab { display: inline-flex; align-items: center; padding: .45rem .9rem; border-radius: 8px; font-size: .9rem;
+  color: #3f3f46; text-decoration: none; white-space: nowrap; }
+.settings-tab:hover { background: #f7f7f7; color: #18181b; }
+.settings-tab.active { background: #fff; color: #18181b; font-weight: 600; box-shadow: 0 1px 3px #0000001f; }
+.settings-tab.disabled { pointer-events: none; opacity: .6; }
+.settings-body > :first-child { margin-top: 0 !important; }
+
+/* Bearing database: opens as a panel over the right side of the plot */
+.mh-card { position: relative; }
+.mh-bearing-edit > summary { cursor: pointer; color: #1d4ed8; width: fit-content; }
+.mh-bearing-edit[open] .bearing-db { position: absolute; right: 1rem; top: 6.5rem; z-index: 20; width: min(26rem, calc(100% - 2rem));
+  padding: 1rem; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 12px 32px #0f172a2e; }
+.bearing-warning { padding: .55rem .75rem; border: 1px solid #fde68a; background: #fffbeb; color: #92400e; border-radius: 8px; font-size: .82rem; }
+.bearing-label { font-weight: 600; font-size: .85rem; margin: .75rem 0 .3rem; }
+.bearing-selected { padding: .5rem .75rem; border: 1px solid #e5e7eb; border-radius: 8px; font-size: .88rem; }
+.bearing-matches { max-height: 14rem; overflow-y: auto; margin-top: .5rem; border: 1px solid #e5e7eb; border-radius: 8px; }
+.bearing-matches > small { display: block; padding: .5rem .75rem; }
+.bearing-match { display: flex; width: 100%; gap: .5rem; align-items: center; padding: .5rem .75rem; border: 0;
+  border-bottom: 1px solid #f1f5f9; background: #fff; text-align: left; font-size: .88rem; }
+.bearing-match:hover { background: #f8fafc; }
+.bearing-match.active { background: #e5e7eb; }

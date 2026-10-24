@@ -28,7 +28,7 @@ from .vds import freshness, spectrum_xy
 
 READ_CALLBACKS = {"diag_tree_tab", "diag_measurements", "diag_measure_pick", "diag_tree", "diag_init", "diag_tree_pick", "diag_axis_options", "diag_select_channel",
                   "diag_overview", "diag_cell_pick", "diag_pick_time", "diag_trend", "diag_view_capture",
-                  "diag_bearing_load", "diag_download"}
+                  "diag_bearing_load", "diag_download", "diag_bearing_matches", "diag_bearing_pick"}
 # (metric name in the historian, chip label, colour)
 METRICS = (("Acceleration", "Acc RMS", "#1f77b4"), ("Velocity", "Vel RMS", "#ff7f0e"),
            ("True Peak", "0-P", "#d62728"), ("Displacement", "Disp", "#9467bd"),
@@ -134,15 +134,23 @@ def page():
                         ], lg=5, className="d-flex justify-content-lg-end align-items-center"),
                     ], className="g-2 align-items-center mt-1"),
                     html.Details([
-                        html.Summary("Bearing at this measurement point", className="small"),
-                        dbc.InputGroup([
-                            dcc.Input(id="diag-bearing-input", list="diag-bearing-list", debounce=True, maxLength=64,
-                                      placeholder="Type the bearing number, e.g. 6205-2RS",
-                                      className="form-control form-control-sm"),
-                            dbc.Button("Save", id="diag-bearing-save", size="sm", color="primary"),
-                        ], size="sm", className="mt-2", style={"maxWidth": "28rem"}),
-                        html.Datalist(id="diag-bearing-list"),
-                        html.Div(id="diag-bearing-result", className="small mt-1"),
+                        html.Summary([html.I(className="fas fa-life-ring me-1"), "Bearing database"], className="small"),
+                        html.Div([
+                            html.Div([html.I(className="fas fa-exclamation-triangle me-2"),
+                                      "Bearing catalogue may be inaccurate. Verify before use."], className="bearing-warning"),
+                            html.Div("Selected", className="bearing-label"),
+                            html.Div(id="diag-bearing-selected", className="bearing-selected"),
+                            html.Div("Search", className="bearing-label"),
+                            dbc.InputGroup([
+                                dcc.Input(id="diag-bearing-input", list="diag-bearing-list", debounce=False, maxLength=64,
+                                          placeholder="Search by designation, e.g. 6205-2RS",
+                                          className="form-control form-control-sm"),
+                                dbc.Button("Save", id="diag-bearing-save", size="sm", color="primary"),
+                            ], size="sm"),
+                            html.Datalist(id="diag-bearing-list"),
+                            html.Div(id="diag-bearing-matches", className="bearing-matches"),
+                            html.Div(id="diag-bearing-result", className="small mt-1"),
+                        ], className="bearing-db"),
                     ], className="mh-bearing-edit"),
                     dcc.Graph(id="diag-plot", config={"displaylogo": False}, style={"height": "300px"}),
                     html.Div(id="diag-peaks"),
@@ -304,7 +312,8 @@ def register(app, get_connection, data_folder):
         term = (search or "").strip().lower()
         with closing(get_connection()) as conn:
             items = gateways(conn)
-        nodes = []
+        # Site > machine > device serial number > channels, like an asset tree in a CMMS.
+        machines = {}
         for item in items:
             machine = next((c["machine"] for c in item["channels"] if c["machine"]), "")
             site = next((c["site"] for c in item["channels"] if c["site"]), "")
@@ -314,16 +323,20 @@ def register(app, get_connection, data_folder):
                 if term and term not in f"{item['gid']} {machine} {site} {text}".lower():
                     continue
                 active = current == [item["gid"], c["ch"]]
-                leaves.append(html.Button([html.Span(className=f"tree-dot {'ok' if c['fresh'] else 'off'}"), text],
+                leaves.append(html.Button([html.Span(className=f"tree-dot {'ok' if c['fresh'] else 'off'}"),
+                                           html.I(className="fas fa-signal tree-icon tree-axis"), text],
                                           id={"type": "diag-tree", "gid": item["gid"], "ch": c["ch"]},
                                           className="tree-leaf" + (" active" if active else ""), n_clicks=0))
-            if not leaves:
-                continue
-            nodes.append(html.Details([
-                html.Summary([html.I(className="fas fa-cog me-2 tree-icon"),
-                              html.Span(machine or item["gid"], className="fw-semibold"),
-                              html.Small(f" {item['gid']}" if machine else "", className="text-muted")]),
-                html.Div(leaves, className="tree-leaves")], open=True, className="tree-node"))
+            if leaves:
+                machines.setdefault(machine, []).append(html.Details([
+                    html.Summary([html.I(className="fas fa-barcode me-2 tree-icon"), html.Span(item["gid"]),
+                                  html.Small(" SN", className="text-muted ms-1")], title=f"Device serial number {item['gid']}"),
+                    html.Div(leaves, className="tree-leaves")], open=True, className="tree-node tree-device"))
+        nodes = [html.Details([
+            html.Summary([html.I(className="fas fa-cog me-2 tree-icon"),
+                          html.Span(machine or "Machine not named", className="fw-semibold" if machine else "text-muted")]),
+            html.Div(devices)], open=True, className="tree-node") for machine, devices in sorted(
+                machines.items(), key=lambda pair: (not pair[0], pair[0].lower()))]
         if not nodes:
             return html.Small("No machine matches." if term else "No VDS has sent data yet.", className="text-muted")
         site = next((c["site"] for item in items for c in item["channels"] if c["site"]), "")
@@ -371,7 +384,7 @@ def register(app, get_connection, data_folder):
             item = next((g for g in gateways(conn) if g["gid"] == gid), {"channels": []})
             latest = {(c, m): (v, json.loads(ctx_ or "{}").get("unit", "")) for c, m, v, ctx_ in conn.execute(
                 "SELECT channel, metric_name, value, context FROM trends_latest WHERE gateway_id=?", (gid,))}
-        crumbs = [p for p in (asset.get("site"), gid, asset.get("machine"), f"CH{ch}") if p]
+        crumbs = [p for p in (asset.get("site"), asset.get("machine"), gid, f"CH{ch}") if p]
         breadcrumb = [html.Span([html.Span(text, className="crumb" + (" current" if i == len(crumbs) - 1 else "")),
                                  html.Span(" / ", className="crumb-sep") if i < len(crumbs) - 1 else None])
                       for i, text in enumerate(crumbs)]
@@ -397,7 +410,9 @@ def register(app, get_connection, data_folder):
             else html.Small("No overall readings yet.", className="text-muted")
         tone = {"alert": "status-alert", "warning": "status-warning", "normal": "status-fresh"}.get(severity, "status-unknown")
         status = html.Span(["Alarm: ", severity.capitalize()], className=f"status-pill {tone}", title="Alarm state of this channel")
-        return (breadcrumb, html.Span([html.Strong(f"{gid} · CH{ch}"), html.Span(f"  {name}", className="text-muted")]),
+        header = html.Span([html.I(className="fas fa-check-circle me-1 text-muted"), html.Strong(gid, title="Device serial number"),
+                            html.Span(f"  {name}", className="text-muted")])
+        return (breadcrumb, header,
                 table, status)
 
     @app.callback([Output("diag-axis", "value", allow_duplicate=True), Output("diag-metrics", "value")],
@@ -461,6 +476,38 @@ def register(app, get_connection, data_folder):
             bearing = historian.ai_channel_settings(conn, gid, ch).get("bearing", "")
             names = ai_views.designations(ai_views.library(conn))
         return bearing, [html.Option(value=name) for name in names]
+
+    @app.callback([Output("diag-bearing-matches", "children"), Output("diag-bearing-selected", "children")],
+                  [Input("diag-bearing-input", "value"), Input("diag-channel", "data"), Input("diag-bearing-result", "children")])
+    def diag_bearing_matches(text, channel, _saved):
+        """Bearings in the library that match what is typed, and the bearing saved for this channel."""
+        with closing(get_connection()) as conn:
+            bearings = ai_views.library(conn)
+            saved = historian.ai_channel_settings(conn, *json.loads(channel)).get("bearing", "") if channel else ""
+        unique = {b["designation"]: b for b in bearings.values()}
+        term = "".join(str(text or "").split()).upper()
+        names = sorted((n for n in unique if term in n.upper().replace(" ", "")), key=lambda n: (not n.upper().startswith(term), n))
+        rows = [html.Button([html.Span(name, className="fw-semibold"),
+                             html.Small(f"BPFO {unique[name]['bpfo']:.2f}x · BPFI {unique[name]['bpfi']:.2f}x",
+                                        className="text-muted ms-auto")],
+                            id={"type": "diag-bearing-pick", "name": name}, n_clicks=0,
+                            className="bearing-match" + (" active" if name == saved else ""),
+                            title=unique[name].get("source", "")) for name in names[:30]]
+        if not rows:
+            rows = [html.Small("No bearing in the library matches. You can still save it.", className="text-muted")]
+        found = ai_views.find_bearing(bearings, saved) if saved else None
+        selected = html.Span([html.Small("Bearing (1)", className="text-muted me-2"), html.Strong(saved),
+                              html.Small(f"  {found['designation']} geometry" if found and found["designation"] != saved else "",
+                                         className="text-muted")]) if saved else             html.Span([html.Small("Bearing (1)", className="text-muted me-2"), "—"])
+        return rows, selected
+
+    @app.callback(Output("diag-bearing-input", "value", allow_duplicate=True),
+                  Input({"type": "diag-bearing-pick", "name": ALL}, "n_clicks"), prevent_initial_call=True)
+    def diag_bearing_pick(clicks):
+        trigger = ctx.triggered_id
+        if not isinstance(trigger, dict) or not any(clicks or []):
+            return no_update
+        return trigger["name"]
 
     @app.callback(Output("diag-bearing-result", "children"), Input("diag-bearing-save", "n_clicks"),
                   [State("diag-channel", "data"), State("diag-bearing-input", "value")], prevent_initial_call=True)

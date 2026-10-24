@@ -24,7 +24,7 @@ try {
   const {call,evaluate,until}=browser;
   await call('Page.navigate',{url});
   await until('document.body?.dataset.demoReady === "/"');
-  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),14);
+  assert.equal(await evaluate('document.querySelectorAll("#sidebar a").length'),8);
   assert.equal(await evaluate('document.querySelector("nav.navbar").textContent.trim()'),'VDS-to-Dashboard');
   assert((await evaluate('document.querySelector("#device-accordion").textContent')).includes('Std deviation'));
   assert.equal(await evaluate('getComputedStyle(document.querySelector("#sidebar")).width'),'288px');
@@ -60,6 +60,11 @@ try {
   for(const [route,id] of [['/assets','asset-save'],['/alarms','rule-save'],['/diagnostics','baseline-save'],['/modbus','modbus-add-btn'],['/opcua','opc-server-switch']]) {
     await navigate(route);assert(await evaluate(`document.getElementById(${JSON.stringify(id)}).disabled`),id+' must be disabled');
   }
+  await navigate('/mqtt');
+  assert(await evaluate('document.querySelector("#nav-settings").classList.contains("active")'),'Settings menu entry is active on its tabs');
+  await evaluate('document.querySelector(".settings-tab[href$=opcua]").click()');
+  await until('document.body?.dataset.demoReady === "/opcua" && document.querySelector(".settings-tab.active").textContent.includes("OPC UA")');
+  assert((await evaluate('document.querySelector("#pi-serial")?.id || ""'))==='', 'Device details are not on the OPC UA tab');
   await navigate('/diagnostics');
   await until('document.querySelector("#diag-trend .js-plotly-plot")?.data?.some(trace => trace.name === "Saved spectra")');
   await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.xaxis?.title?.text === "f [Hz + CPM]"');

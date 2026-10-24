@@ -1023,7 +1023,7 @@ def protect_dashboard():
                     'handle_graph_modal', 'pop_hist_gateways', 'pop_hist_metrics', 'load_history',
                     'download_history', 'update_system_info', 'update_time_display', 'update_mqtt_bar',
                     'update_modbus_tbl', 'update_opc_tree', 'toggle_sidebar', 'save_accordion_state',
-                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph', 'sidebar_user'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | history_view.READ_CALLBACKS
+                    'disable_ch', 'toggle_time_inputs', 'render_modal_graph', 'sidebar_user', 'nav_settings'} | workspace_views.READ_CALLBACKS | ai_views.READ_CALLBACKS | history_view.READ_CALLBACKS
         status_poll = name == 'toggle_opc_status' and all(item == 'system_info_interval.n_intervals' for item in (request.get_json(silent=True) or {}).get('changedPropIds', []))
         if viewer and not admin and name not in readonly and not status_poll:
             return Response('Administrator access required for this action', 403)
@@ -1210,25 +1210,33 @@ sidebar = html.Div([
     html.H4("Menu", className="text-white p-3"),
     dbc.Nav([
         html.Div("Monitor", className="nav-section"),
-        dbc.NavLink([html.I(className="fas fa-chart-line me-2"), "Dashboard"], href="/", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-heartbeat me-2"), "Health Agents"], href="/health", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-home me-2"), "Home"], href="/", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-wave-square me-2"), "Machine history"], href='/diagnostics', active='exact', className='text-white'),
+        dbc.NavLink([html.I(className="fas fa-heartbeat me-2"), "Health Agents"], href="/health", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-search me-2"), "History Explorer"], href="/history", active="exact", className="text-white"),
         dbc.NavLink([html.I(className="fas fa-bell me-2"), "Alarm management"], href='/alarms', active='exact', className='text-white'),
         html.Div("Setup", className="nav-section"),
         dbc.NavLink([html.I(className="fas fa-tags me-2"), "Asset registry"], href='/assets', active='exact', className='text-white'),
-        dbc.NavLink([html.I(className="fas fa-broadcast-tower me-2"), "MQTT Settings"], href="/mqtt", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-network-wired me-2"), "Ethernet Settings"], href="/ethernet", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-rss me-2"), "Modbus TCP"], href="/modbus", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-project-diagram me-2"), "OPC UA Server"], href="/opcua", active="exact", className="text-white"),
-        html.Div("System", className="nav-section"),
         dbc.NavLink([html.I(className="fas fa-file-alt me-2"), "Reports and backups"], href='/reports', active='exact', className='text-white'),
-        dbc.NavLink([html.I(className="fas fa-database me-2"), "Data Storage"], href="/data-storage", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-server me-2"), "Device Info"], href="/device", active="exact", className="text-white"),
-        dbc.NavLink([html.I(className="fas fa-bug me-2"), "Debug Log"], href="/debug", active="exact", className="text-white"),
+        dbc.NavLink([html.I(className="fas fa-cog me-2"), "Settings"], id="nav-settings", href="/device", active="exact", className="text-white"),
     ], vertical=True, pills=True),
     html.Div(id="sidebar-user", className="sidebar-user"),
 ], id="sidebar", style={"position": "fixed", "top": 0, "left": 0, "bottom": 0, "width": "18rem", "padding": "1rem", "paddingTop": "4rem", "backgroundColor": "#343a40", "transition": "all 0.3s"})
+
+# Every service and system page sits under one Settings entry, with tabs along the top.
+SETTINGS_PAGES = (("/device", "fa-server", "Device"), ("/mqtt", "fa-broadcast-tower", "MQTT"),
+                  ("/ethernet", "fa-network-wired", "Ethernet"), ("/modbus", "fa-rss", "Modbus TCP"),
+                  ("/opcua", "fa-project-diagram", "OPC UA"), ("/data-storage", "fa-database", "Data storage"),
+                  ("/debug", "fa-bug", "Debug log"))
+
+
+def settings_page(pathname, body):
+    tabs = html.Nav([html.A([html.I(className=f"fas {icon} me-2"), label], href=path,
+                            className="settings-tab" + (" active" if path == pathname else ""),
+                            **({"aria-current": "page"} if path == pathname else {}))
+                     for path, icon, label in SETTINGS_PAGES], className="settings-tabs", **{"aria-label": "Settings"})
+    return html.Div([html.H3("Settings", className="settings-title"), tabs, html.Div(body, className="settings-body")])
+
 
 data_storage_layout = dcc.Loading(id="loading-data-storage", type="default", children=html.Div(id="data-storage-container"))
 
@@ -1491,10 +1499,11 @@ def create_datetime_settings_card():
         ])
     ], style={"boxShadow": "0 4px 12px rgba(0,0,0,0.1)", "border": "none", "borderRadius": "8px"})
 
-dashboard_layout = html.Div([dbc.Row(dbc.Col(system_info_panel)), html.Div(id="device-dashboard-container")])
+dashboard_layout = html.Div([html.Div(id="device-dashboard-container")])
 
 device_info_layout = html.Div([
-    dbc.Row(dbc.Col(html.H5("System Information")), className="mb-2 mt-4"),
+    dbc.Row(dbc.Col(html.H5("System Information")), className="mb-2 mt-2"),
+    system_info_panel,
     dbc.Row([dbc.Col(dbc.Card([dbc.CardHeader("Gateway Details"), dbc.CardBody([html.Div(id="device-info-list"), html.Hr(), html.P([html.Strong("MQTT Broker: "), html.Span(f"{BROKER}:{PORT}")]), html.P([html.Strong("MQTT Topic: "), html.Span(TOPIC)])])], style={"boxShadow": "0 4px 12px rgba(0,0,0,0.1)","border": "none","borderRadius": "8px"}), width=6)], className="mb-4"),
     dbc.Row([dbc.Col(create_datetime_settings_card(), width=6)])
 ])
@@ -1547,6 +1556,12 @@ def sidebar_user(_path):
             html.Div([html.Div(name, className="user-name"), html.Div(role, className="user-role")], className="user-text")]
 
 
+@app.callback(Output("nav-settings", "active"), Input("url", "pathname"))
+def nav_settings(pathname):
+    """The Settings menu entry stays highlighted on every settings tab."""
+    return any(pathname == path for path, _icon, _label in SETTINGS_PAGES)
+
+
 @app.callback(Output("live-update-trigger", "data"), Input("live-refresh", "n_intervals"))
 def refresh_live_data(message):
     return {'type': 'data_update', 'sequence': message}
@@ -1560,14 +1575,12 @@ def display_page(pathname):
     if pathname == '/health':
         return html.Div([html.H3('Health Agents'), html.P('Live advisory checks for sensor freshness, connectivity, and storage.', className='text-muted'), html.Div(id='health-findings'),
                          *([ai_views.health_section()] if historian.edge_ai_enabled() else [])])
-    if pathname == "/device": return device_info_layout
-    elif pathname == "/data-storage": return data_storage_layout
-    elif pathname == "/history": return history_layout
-    elif pathname == "/debug": return debug_layout
-    elif pathname == "/mqtt": return create_mqtt_layout()
-    elif pathname == "/ethernet": return ethernet_layout
-    elif pathname == "/modbus": return create_modbus_layout()
-    elif pathname == "/opcua": return create_opcua_layout() 
+    settings = {"/device": lambda: device_info_layout, "/data-storage": lambda: data_storage_layout,
+                "/debug": lambda: debug_layout, "/mqtt": create_mqtt_layout, "/ethernet": lambda: ethernet_layout,
+                "/modbus": create_modbus_layout, "/opcua": create_opcua_layout}
+    if pathname in settings:
+        return settings_page(pathname, settings[pathname]())
+    if pathname == "/history": return history_layout
     elif pathname == "/": return dashboard_layout
     return dashboard_layout
 

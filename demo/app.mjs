@@ -85,6 +85,7 @@ function readonly() {
     else control.disabled = true;
     control.title = 'Viewer preview — changes and service controls are disabled';
   });
+  main.querySelectorAll('a.settings-tab[href^="/"]').forEach(anchor => { anchor.href = '#' + anchor.getAttribute('href'); });
   main.querySelectorAll('a[href^="/"]').forEach(anchor => {
     anchor.removeAttribute('href'); anchor.setAttribute('aria-disabled', 'true');
     anchor.classList.add('disabled'); anchor.title = 'Unavailable in the public viewer demo';
@@ -389,7 +390,7 @@ async function navigate() {
   main.querySelector('.demo-page').innerHTML=page.html;
   readonly();
   document.querySelectorAll('#sidebar a').forEach(link=>{
-    const active=link.getAttribute('href')==='#'+route;
+    const active=link.getAttribute('href')==='#'+route||(link.id==='nav-settings'&&Boolean(main.querySelector('.settings-tab.active')));
     link.classList.toggle('active',active);active?link.setAttribute('aria-current','page'):link.removeAttribute('aria-current');
   });
   const active=document.querySelector('#sidebar [aria-current=page]');

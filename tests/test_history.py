@@ -178,6 +178,9 @@ class HistoryPageTests(unittest.TestCase):
         self.assertIn("Pump P-1", text)
         self.assertIn("CH1 · Motor DE", text)
         self.assertIn("tree-leaf active", text)
+        # Machine, then the device serial number, then its channels
+        self.assertLess(text.index("Pump P-1"), text.index("fa-barcode"))
+        self.assertLess(text.index("fa-barcode"), text.index("CH1 · Motor DE"))
         empty = self.request("diag_tree", [{"id": "diag-search", "property": "value", "value": "zzz"}, self.channel()])
         self.assertIn("No machine matches", json.dumps(empty))
         overview = self.request("diag_overview", [self.channel(), {"id": "diag-metrics", "property": "value",
@@ -185,6 +188,7 @@ class HistoryPageTests(unittest.TestCase):
         crumbs = json.dumps(overview["diag-breadcrumb"])
         for part in ("Plant A", "GW1", "Pump P-1", "CH1"):
             self.assertIn(part, crumbs)
+        self.assertLess(crumbs.index("Pump P-1"), crumbs.index("GW1"))
         self.assertIn("1.47", json.dumps(overview["diag-overall"]))
         pick = self.request("diag_tree_pick", [[{"id": {"type": "diag-tree", "gid": "GW1", "ch": "1"},
                                                  "property": "n_clicks", "value": 1}]],
@@ -244,6 +248,22 @@ class HistoryPageTests(unittest.TestCase):
                                [self.channel(), {"id": "diag-bearing-input", "property": "value", "value": "XYZ-1"}])
         self.assertIn("not in the bearing library", json.dumps(unknown))
 
+    def test_bearing_database_lists_matches_and_picks_one(self):
+        inputs = lambda text: [{"id": "diag-bearing-input", "property": "value", "value": text}, self.channel(),
+                               {"id": "diag-bearing-result", "property": "children", "value": None}]
+        found = self.request("diag_bearing_matches", inputs("6205"), viewer=True)
+        rows = json.dumps(found["diag-bearing-matches"])
+        self.assertIn("6205-2RS", rows)
+        self.assertIn("BPFO 3.58x", rows)
+        self.assertNotIn("6310", rows)
+        self.assertIn("—", json.dumps(found["diag-bearing-selected"], ensure_ascii=False))  # nothing saved yet
+        none = self.request("diag_bearing_matches", inputs("ZZZ999"), viewer=True)
+        self.assertIn("No bearing in the library matches", json.dumps(none))
+        pick = self.request("diag_bearing_pick", [[{"id": {"type": "diag-bearing-pick", "name": "6205-2RS"},
+                                                    "property": "n_clicks", "value": 1}]], viewer=True,
+                            changed=['{"name":"6205-2RS","type":"diag-bearing-pick"}.n_clicks'])
+        self.assertEqual(pick["diag-bearing-input"]["value"], "6205-2RS")
+
     def test_viewer_cannot_save_a_bearing(self):
         key = next(k for k, v in app.app.callback_map.items()
                    if getattr(v.get("callback"), "__name__", "") == "diag_bearing_save")
@@ -297,6 +317,19 @@ class HistoryPageTests(unittest.TestCase):
         self.assertIn("Warning", json.dumps(body["diag-status"]))
         user = self.request("sidebar_user", [{"id": "url", "property": "pathname", "value": "/"}], viewer=True)
         self.assertIn("Viewer", json.dumps(user))
+
+    def test_settings_pages_share_tabs_and_one_menu_entry(self):
+        url = lambda path: [{"id": "url", "property": "pathname", "value": path}]
+        for path in ("/device", "/mqtt", "/opcua", "/debug"):
+            page = json.dumps(self.request("display_page", url(path), viewer=True))
+            for label in ("Device", "MQTT", "Ethernet", "Modbus TCP", "OPC UA", "Data storage", "Debug log"):
+                self.assertIn(label, page)
+            self.assertIn('"aria-current": "page"', page)
+            self.assertTrue(self.request("nav_settings", url(path), viewer=True)["nav-settings"]["active"])
+        self.assertFalse(self.request("nav_settings", url("/"), viewer=True)["nav-settings"]["active"])
+        # Device details (serial number, uptime, memory ...) live on the Device tab, not on Home
+        self.assertIn("pi-serial", json.dumps(self.request("display_page", url("/device"))))
+        self.assertNotIn("pi-serial", json.dumps(self.request("display_page", url("/"))))
 
     def test_baseline_button_still_saves_the_live_spectrum(self):
         app.data_storage["GW1"] = {"channels": {"1": {"spectrum_context": {"bandwidth": 1000, "lines": 800},

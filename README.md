@@ -106,7 +106,7 @@ application; the database remains SQLite on a persistent volume.
 
 ### 1. Connect and identify the measurement point
 
-Configure the broker in **MQTT Settings** and restart the application. When data
+Configure the broker in **Settings > MQTT** and restart the application. When data
 arrives, open **Asset registry**, select a channel, and enter the site, machine,
 bearing location, direction, and expected publishing interval. Click **Save asset**.
 
@@ -139,7 +139,7 @@ diamonds. The toolbar switches log x, log y, harmonics, bearing lines and peaks.
 
 The dashboard saves one spectrum and one waveform per channel every 30 minutes and
 keeps them 90 days (`VDS_SNAPSHOT_INTERVAL_S`, `VDS_SNAPSHOT_RETENTION_DAYS`), in
-addition to recordings started in **Data Storage**. The capture viewer shows the
+addition to recordings started in **Settings > Data storage**. The capture viewer shows the
 spectrum in acceleration, velocity (derived from the g² spectrum) or envelope
 (computed from the waveform), the waveform with RMS, peak, crest factor and kurtosis,
 or a waterfall of recent spectra. Frequencies are labelled in Hz with CPM underneath,
@@ -215,7 +215,7 @@ python -m venv .venv
 
 Open http://127.0.0.1:8050. On Linux, use `.venv/bin/python` instead.
 The application uses Waitress with one process and eight HTTP threads.
-Configure the broker in MQTT Settings, then restart the application to apply
+Configure the broker in Settings > MQTT, then restart the application to apply
 broker changes. Restart Application restarts Python; it does not reboot the host.
 
 ## Docker
@@ -261,7 +261,7 @@ in the health panel and never drive outputs.
 
 ## Commission a device
 
-1. Configure VDS publishing to your MQTT broker and subscribe through MQTT Settings.
+1. Configure VDS publishing to your MQTT broker and subscribe through Settings > MQTT.
 2. Open Asset registry. Map each gateway/channel to site, machine, bearing location,
    and measurement direction. Enter the device's expected publishing interval.
 3. Check Health Agents and the measurement cards for timestamp, metadata, and
