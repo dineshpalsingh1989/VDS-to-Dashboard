@@ -122,18 +122,26 @@ to record the operator's review. The screenshot's thresholds are demonstration v
 
 ![Alarm settings and a persisted warning event with measurement context](docs/images/alarm-management.png)
 
-### 3. Compare spectra and recorded captures
+### 3. Machine history: click any moment to see its spectrum
 
-Start a recording in **Data Storage** to retain raw captures. Open **Vibration
-diagnostics**, choose a channel, and use **Capture current baseline** when its
-operating condition is suitable as a reference. Compare the current spectrum to
-that baseline, inspect RPM harmonics, or enable the order axis. The waterfall
-shows compatible recorded spectra over time. Select a recorded capture, review its
-acquisition details and waveform, inspect the strongest peaks, or click a spectrum
-point for frequency, amplitude, and order. Enter Manual RPM when needed. The
-screenshot shows the updated order view with a display-only 1200 RPM override.
+Open **Machine history**, choose the VDS and a channel tab, and turn on the readings
+to plot (Acc RMS, Vel RMS, 0-P, displacement, crest factor, standard deviation), each
+on its own axis. Click anywhere on the history: the spectrum and waveform saved
+closest to that moment open below, with the time difference shown. Ticks under the
+history mark where saved spectra exist.
 
-![Updated diagnostics with recorded capture selection, manual RPM, acquisition details, waveform, spectrum, peak readings, and waterfall](docs/images/diagnostics-v2.png)
+The dashboard saves one spectrum and one waveform per channel every 30 minutes and
+keeps them 90 days (`VDS_SNAPSHOT_INTERVAL_S`, `VDS_SNAPSHOT_RETENTION_DAYS`), in
+addition to recordings started in **Data Storage**. The capture viewer shows the
+spectrum in acceleration, velocity (derived from the g² spectrum) or envelope
+(computed from the waveform), the waveform with RMS, peak, crest factor and kurtosis,
+or a waterfall of recent spectra. Frequencies are labelled in Hz with CPM underneath,
+the strongest peaks are listed with their multiple of running speed, and each
+capture downloads as CSV. On IRIV Edge AI installs the spectrum also shows bearing
+and fault frequency lines and the AI's finding. **Save the live spectrum as this
+channel's baseline** sets the reference for the Baseline health agent.
+
+![Machine history: a clicked moment on the trend opens the spectrum saved closest to it](docs/images/machine-history.png)
 
 ### 4. Review health and export results
 
@@ -256,8 +264,8 @@ in the health panel and never drive outputs.
    hysteresis, and consecutive-capture persistence. Initial thresholds are examples.
 5. Start a recording to retain raw waveforms and spectra. Scalar history is
    continuous, whether or not a recording job is active.
-6. Open Vibration diagnostics to save a baseline, overlay spectra, inspect RPM
-   harmonics/order axes, and view a waterfall of compatible recorded spectra.
+6. Open Machine history to save a baseline, click any moment of the trend to open
+   its spectrum and waveform, and view a waterfall of recent spectra.
 
 Freshness is based on three missed publishing intervals, not the browser refresh
 rate. The default interval is 60 seconds, so the default stale threshold is 180
@@ -338,6 +346,8 @@ be re-entered in Alarm management with verified measurement settings.
 | VDS_TREND_RETENTION_DAYS | 0 | Scalar history retention |
 | VDS_RAW_RETENTION_DAYS | 0 | Waveform/spectrum retention |
 | VDS_ALARM_RETENTION_DAYS | 0 | Acknowledged alarm retention |
+| VDS_SNAPSHOT_INTERVAL_S | 1800 | Seconds between saved spectra and waveforms per channel for Machine history; 0 is off |
+| VDS_SNAPSHOT_RETENTION_DAYS | 90 | Days of saved spectra and waveforms kept |
 | VDS_EDGE_AI | 0 | 1 on IRIV Edge AI installs: AI settings, spectrum fault lines and learning samples |
 | VDS_LEARNING_INTERVAL_S | 600 | Seconds between AI learning samples per channel of AI-enabled VDS units; 0 is off |
 | VDS_LEARNING_RETENTION_HOURS | 6 | Hours each channel keeps learning samples |

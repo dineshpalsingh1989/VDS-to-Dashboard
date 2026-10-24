@@ -152,3 +152,22 @@ input:focus-visible, select:focus-visible { outline: 2px solid #126b82; outline-
   .overview-tile .tile-value { font-size: 1.15rem; }
   .hero-value { font-size: 1.7rem; }
 }
+
+/* ---------------------------------------------------------------- machine history */
+.history-card { background: #fff; border: 1px solid var(--vds-border); border-radius: 14px; padding: 1rem 1.1rem; margin-bottom: 1rem; box-shadow: 0 1px 4px #2030470a; }
+.btn-tabs { display: inline-flex; flex-wrap: wrap; gap: .25rem; background: #f1f5f9; border-radius: 10px; padding: .2rem; }
+.btn-tabs .form-check { margin: 0; padding: 0; }
+.btn-tabs .btn { border: 0; border-radius: 8px; color: #42566d; font-weight: 600; padding: .3rem .8rem; }
+.btn-tabs .btn.active, .btn-tabs .btn-check:checked + .btn { background: #fff; color: var(--vds-ink); box-shadow: 0 1px 3px #2030471f; }
+.metric-chips .form-check { margin: 0 .35rem .35rem 0; padding: 0; }
+.metric-chip { display: inline-block; padding: .35rem .95rem; border-radius: 999px; font-weight: 650; font-size: .85rem; cursor: pointer;
+  border: 2px solid var(--chip, #64748b); color: var(--chip, #64748b); background: #fff; user-select: none; }
+.metric-chip.active, .btn-check:checked + .metric-chip { background: var(--chip, #64748b); color: #fff; }
+.metric-chips .form-check:nth-child(1) { --chip: #1f77b4; }
+.metric-chips .form-check:nth-child(2) { --chip: #ff7f0e; }
+.metric-chips .form-check:nth-child(3) { --chip: #d62728; }
+.metric-chips .form-check:nth-child(4) { --chip: #9467bd; }
+.metric-chips .form-check:nth-child(5) { --chip: #8c564b; }
+.metric-chips .form-check:nth-child(6) { --chip: #e377c2; }
+.bearing-header { font-size: .85rem; font-variant-numeric: tabular-nums; }
+#diag-trend, #diag-plot { margin-top: .5rem; }

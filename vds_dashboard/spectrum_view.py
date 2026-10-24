@@ -19,6 +19,21 @@ def strongest_peaks(x, y, limit=MAX_PEAKS):
     return np.sort(peaks[order])
 
 
+def nice_step(span, target=10):
+    raw = span / target if span > 0 else 1
+    power = 10 ** np.floor(np.log10(raw))
+    return float(min((m * power for m in (1, 2, 2.5, 5, 10) if m * power >= raw), default=10 * power))
+
+
+def add_cpm_axis(figure, top):
+    """Frequency ticks labelled in Hz with CPM (cycles per minute) underneath."""
+    step = nice_step(top)
+    ticks = np.arange(0, top + step / 2, step)
+    figure.update_xaxes(tickmode="array", tickvals=ticks.tolist(),
+                        ticktext=[f'{t:g}<br><span style="color:#7b8aa0">{t * 60:,.0f}</span>' for t in ticks],
+                        title="Frequency (Hz / CPM)")
+
+
 def spectrum_figure(x, y, title, rpm=None, info=None, families=(), harmonics=5, log=False):
     """Returns (figure, peak rows). info carries bearing, gear, blade and mains data for the lines."""
     x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)

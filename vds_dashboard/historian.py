@@ -48,6 +48,12 @@ def setup_schema(conn):
             gateway_id TEXT, channel TEXT, settings TEXT NOT NULL,
             PRIMARY KEY (gateway_id, channel));
         CREATE TABLE IF NOT EXISTS ai_bearings (designation TEXT PRIMARY KEY, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, gateway_id TEXT NOT NULL, channel TEXT NOT NULL,
+            kind TEXT NOT NULL, timestamp_ms INTEGER NOT NULL, received_ms INTEGER NOT NULL,
+            rpm REAL, data BLOB NOT NULL, sampling_freq REAL, bandwidth REAL, lines INTEGER,
+            context TEXT, UNIQUE (gateway_id, channel, kind, timestamp_ms));
+        CREATE INDEX IF NOT EXISTS idx_snapshots_recent ON snapshots (gateway_id, channel, kind, received_ms);
         CREATE TABLE IF NOT EXISTS ai_feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT, gateway_id TEXT NOT NULL, channel TEXT NOT NULL,
             kind TEXT NOT NULL, since_ms INTEGER, fault_id TEXT, verdict TEXT NOT NULL,
@@ -265,6 +271,47 @@ def learning_retention_hours():
         return 6
 
 
+def snapshot_interval():
+    """Seconds between history snapshots per channel (default 30 minutes); 0 turns them off."""
+    try:
+        return max(0, int(os.environ.get("VDS_SNAPSHOT_INTERVAL_S", "1800")))
+    except ValueError:
+        return 1800
+
+
+def snapshot_retention_days():
+    try:
+        return max(1, int(os.environ.get("VDS_SNAPSHOT_RETENTION_DAYS", "90")))
+    except ValueError:
+        return 90
+
+
+def store_snapshots(conn, packet, context, interval, retention_days=90):
+    """Keep a spectrum and a waveform per channel every interval, so any point of the
+    history can be opened later. Each channel trims its own snapshots past retention."""
+    received_ms = int(packet["received_at"] * 1000)
+    for kind, values in (("spectrum", packet["spectrum_data"]), ("waveform", packet["waveform_data"])):
+        if values is None or len(values) == 0:
+            continue
+        last = conn.execute(
+            "SELECT MAX(received_ms) FROM snapshots WHERE gateway_id=? AND channel=? AND kind=?",
+            (packet["gateway_id"], packet["channel"], kind),
+        ).fetchone()[0]
+        if last is not None and received_ms - last < interval * 1000:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO snapshots (gateway_id,channel,kind,timestamp_ms,received_ms,rpm,data,"
+            "sampling_freq,bandwidth,lines,context) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (packet["gateway_id"], packet["channel"], kind, packet["timestamp_ms"], received_ms, packet["rpm"],
+             np.asarray(values, dtype="<f4").tobytes(), packet["sampling_freq"], packet["bandwidth"],
+             packet["lines"], context),
+        )
+        conn.execute(
+            "DELETE FROM snapshots WHERE gateway_id=? AND channel=? AND kind=? AND received_ms < ?",
+            (packet["gateway_id"], packet["channel"], kind, received_ms - retention_days * 86_400_000),
+        )
+
+
 def store_learning_samples(conn, packet, context, interval, retention_hours=6):
     """Keep one spectrum and one waveform per channel every interval for the AI advisor.
 
@@ -347,6 +394,9 @@ def store_packet(conn, packet, recording=False):
                 capture,
             )
             accepted_metrics[metric] = value
+    every = snapshot_interval()
+    if every and not packet.get("quality_issues"):
+        store_snapshots(conn, packet, context, every, snapshot_retention_days())
     interval = learning_interval()
     if interval and edge_ai_enabled() and not packet.get("quality_issues") and ai_enabled(conn, gid):
         store_learning_samples(conn, packet, context, interval, learning_retention_hours())
@@ -454,7 +504,7 @@ def backup_database(source, destination):
     os.replace(temporary, destination)
 
 
-def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None, learning_hours=0):
+def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None, learning_hours=0, snapshot_days=0):
     now = now or datetime.now()
     counts = {}
     for table, days in (
@@ -471,6 +521,12 @@ def prune_history(conn, trend_days=0, raw_days=0, alarm_days=0, now=None, learni
                 (cutoff,),
             )
             counts[table] = cursor.rowcount
+    if snapshot_days > 0:
+        # Catches channels that stopped publishing; active channels trim themselves.
+        counts["snapshots"] = conn.execute(
+            "DELETE FROM snapshots WHERE received_ms < ?",
+            (int((now - timedelta(days=snapshot_days)).timestamp() * 1000),),
+        ).rowcount
     if learning_hours > 0:
         # Catches channels that stopped publishing; active channels trim themselves.
         counts["learning_samples"] = conn.execute(
@@ -555,9 +611,102 @@ def maintenance_once(conn, data_folder, now=None):
         int(os.environ.get("VDS_RAW_RETENTION_DAYS", "0")),
         int(os.environ.get("VDS_ALARM_RETENTION_DAYS", "0")),
         learning_hours=learning_retention_hours(),
+        snapshot_days=snapshot_retention_days(),
     )
     conn.execute(
         "INSERT OR REPLACE INTO maintenance_runs VALUES (?,?)", (day, time.time())
     )
     conn.commit()
     return True
+
+
+def capture_times(conn, gid, channel, start_ms, end_ms):
+    """Times (ms) of saved spectra for one channel: history snapshots and recordings."""
+    times = {row[0] for row in conn.execute(
+        "SELECT timestamp_ms FROM snapshots WHERE gateway_id=? AND channel=? AND kind='spectrum' "
+        "AND timestamp_ms BETWEEN ? AND ?", (gid, channel, start_ms, end_ms))}
+    for (context,) in conn.execute(
+            "SELECT context FROM raw_spectrum WHERE gateway_id=? AND channel=? AND timestamp BETWEEN ? AND ?",
+            (gid, channel, datetime.fromtimestamp(start_ms / 1000), datetime.fromtimestamp(end_ms / 1000))):
+        try:
+            times.add(int(json.loads(context or "{}")["timestamp_ms"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(times)
+
+
+def nearest_capture(conn, gid, channel, kind, at_ms=None):
+    """The saved spectrum or waveform closest to at_ms (latest when None), from snapshots or recordings.
+
+    Returns a dict with timestamp_ms, values (numpy), rpm, sampling_freq, bandwidth, lines and
+    context, or None when nothing is saved for this channel.
+    """
+    candidates = []
+    order = "DESC" if at_ms is None else None
+    queries = ([("<=", "DESC"), (">=", "ASC")] if at_ms is not None else [(None, order)])
+    for comparison, direction in queries:
+        where = "" if comparison is None else f" AND timestamp_ms {comparison} ?"
+        args = (gid, channel, kind) + (() if comparison is None else (at_ms,))
+        row = conn.execute(
+            "SELECT timestamp_ms, rpm, data, sampling_freq, bandwidth, lines, context FROM snapshots "
+            f"WHERE gateway_id=? AND channel=? AND kind=?{where} ORDER BY timestamp_ms {direction} LIMIT 1",
+            args).fetchone()
+        if row:
+            candidates.append(dict(timestamp_ms=row[0], rpm=row[1], values=np.frombuffer(row[2], "<f4").astype(float),
+                                   sampling_freq=row[3], bandwidth=row[4], lines=row[5],
+                                   context=json.loads(row[6] or "{}"), source="history snapshot"))
+    table, column, extra = (("raw_spectrum", "spectrum_data", "bandwidth, lines") if kind == "spectrum"
+                            else ("raw_waveforms", "waveform_data", "sampling_freq"))
+    stamp = None if at_ms is None else datetime.fromtimestamp(at_ms / 1000)
+    for comparison, direction in queries:
+        where = "" if comparison is None else f" AND timestamp {comparison} ?"
+        args = (gid, channel) + (() if comparison is None else (stamp,))
+        row = conn.execute(f"SELECT timestamp, {column}, {extra}, context FROM {table} WHERE gateway_id=? "
+                           f"AND channel=?{where} ORDER BY timestamp {direction} LIMIT 1", args).fetchone()
+        if not row:
+            continue
+        context = json.loads(row[-1] or "{}")
+        try:
+            ms = int(context.get("timestamp_ms") or datetime.fromisoformat(str(row[0])).timestamp() * 1000)
+        except ValueError:
+            continue
+        item = dict(timestamp_ms=ms, rpm=None, values=np.frombuffer(row[1], "<f8").astype(float), context=context,
+                    source="recording")
+        if kind == "spectrum":
+            item.update(bandwidth=row[2], lines=row[3], sampling_freq=context.get("sampling_freq"))
+        else:
+            item.update(sampling_freq=row[2], bandwidth=None, lines=None)
+        candidates.append(item)
+    if not candidates:
+        return None
+    if at_ms is None:
+        return max(candidates, key=lambda c: c["timestamp_ms"])
+    return min(candidates, key=lambda c: abs(c["timestamp_ms"] - at_ms))
+
+
+def recent_spectra(conn, gid, channel, before_ms, limit=30):
+    """Up to limit saved spectra up to before_ms, oldest first, for a waterfall."""
+    rows = conn.execute(
+        "SELECT timestamp_ms, data, bandwidth, lines, context FROM snapshots WHERE gateway_id=? AND channel=? "
+        "AND kind='spectrum' AND timestamp_ms <= ? ORDER BY timestamp_ms DESC LIMIT ?",
+        (gid, channel, before_ms, limit)).fetchall()
+    found = {}
+    for ms, data, bandwidth, lines, context in rows:
+        found[ms] = (np.frombuffer(data, "<f4"), bandwidth, lines, context)
+    for stamp, data, bandwidth, lines, context in conn.execute(
+            "SELECT timestamp, spectrum_data, bandwidth, lines, context FROM raw_spectrum WHERE gateway_id=? "
+            "AND channel=? AND timestamp <= ? ORDER BY timestamp DESC LIMIT ?",
+            (gid, channel, datetime.fromtimestamp(before_ms / 1000), limit)):
+        try:
+            ms = int(json.loads(context or "{}").get("timestamp_ms")
+                     or datetime.fromisoformat(str(stamp)).timestamp() * 1000)
+        except ValueError:
+            continue
+        found.setdefault(ms, (np.frombuffer(data, "<f8"), bandwidth, lines, context))
+    items = []
+    for ms in sorted(found)[-limit:]:
+        data, bandwidth, lines, context = found[ms]
+        items.append(dict(json.loads(context or "{}"), spectrum_data=data.astype(float).tolist(),
+                          bandwidth=bandwidth, lines=lines, timestamp_ms=ms,
+                          label=datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M")))
+    return items

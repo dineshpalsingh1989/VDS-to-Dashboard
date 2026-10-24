@@ -13,7 +13,14 @@ import json
 import math
 import sqlite3
 
+import sys
+from pathlib import Path
+
 import numpy as np
+
+# Envelope maths is shared with the dashboard's history view.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from vds_dashboard.signals import MIN_ENVELOPE_FS, envelope_spectrum  # noqa: E402,F401
 
 MAX_SPECTRUM_BINS = 1600
 SPEED_STEP = 1.10
@@ -23,7 +30,6 @@ WAVEFORM_NAMES = ("rms", "peak", "crest", "kurtosis", "skewness")
 WAVEFORM_FLOORS = np.array([0.02, 0.02, 0.15, 0.3, 0.2])
 METRIC_FLOOR = np.array([0.02])  # log10 units, about 5 %
 ENVELOPE_BINS = 800
-MIN_ENVELOPE_FS = 2000  # Hz; slower waveforms cannot carry bearing resonance
 
 
 def speed_band(rpm):
@@ -73,34 +79,6 @@ def waveform_features(values):
         "skewness": float(np.mean(x ** 3) / rms ** 3),
         "clipped": at_peak >= 3 and at_peak / x.size >= 0.01,
     }
-
-
-def envelope_spectrum(values, fs):
-    """Envelope (demodulated) spectrum of a waveform, for early bearing damage.
-
-    Bearing defects make short impacts that ring the structure at high frequency.
-    Band-passing that high band and taking its envelope reveals the impact rate
-    (BPFO, BPFI, ...) long before those frequencies rise in the normal spectrum.
-    """
-    x = np.asarray(values, dtype=float)
-    if not fs or fs < MIN_ENVELOPE_FS:
-        raise ValueError(f"Waveform sampled at {fs or 0:g} Hz; envelope analysis needs {MIN_ENVELOPE_FS} Hz or more")
-    if x.size < 1024 or not np.all(np.isfinite(x)):
-        raise ValueError("Waveform too short for envelope analysis")
-    x = x - x.mean()
-    spectrum = np.fft.fft(x)
-    freqs = np.fft.fftfreq(x.size, 1.0 / fs)
-    band = (freqs >= 0.1 * fs) & (freqs <= 0.4 * fs)  # positive band only: analytic signal of the band
-    envelope = np.abs(np.fft.ifft(np.where(band, 2 * spectrum, 0)))
-    envelope -= envelope.mean()
-    # Average overlapping segments (Welch). A single envelope spectrum scatters about
-    # 6 dB from line to line, enough to hide a young defect; averaging cuts that sharply.
-    segment = 1 << int(math.log2(min(fs / 2, x.size / 4)))
-    windows = np.lib.stride_tricks.sliding_window_view(envelope, segment)[::segment // 2]
-    power = np.mean(np.abs(np.fft.rfft(windows * np.hanning(segment), axis=1)) ** 2, axis=0)
-    f = np.fft.rfftfreq(segment, 1.0 / fs)
-    keep = (f > 0) & (f <= min(1000.0, 0.15 * fs))
-    return f[keep], power[keep]
 
 
 def envelope_features(values, fs):

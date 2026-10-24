@@ -51,7 +51,7 @@ try {
     await wait(200);
   }
   const routes=[['/','#device-dashboard-container'],['/health','#health-findings'],['/assets','#asset-channel'],
-    ['/alarms','#rule-channel'],['/diagnostics','#diag-channel'],['/reports','#report-preview'],
+    ['/alarms','#rule-channel'],['/diagnostics','#diag-trend'],['/reports','#report-preview'],
     ['/device','#device-info-list'],['/data-storage','#data-storage-controls-container'],['/history','#history-channel-select'],
     ['/debug','#debug-log-output'],['/mqtt','#mqtt-host-input'],['/ethernet','#ethernet-settings-card-body'],
     ['/modbus','#modbus-table-container'],['/opcua','#opc-live-tree-container']];
@@ -65,8 +65,8 @@ try {
     if(path==='/assets') await choose('asset-channel');
     if(path==='/alarms') await choose('rule-channel');
     if(path==='/diagnostics') {
-      await choose('diag-channel');
-      await until('document.querySelector("#diag-spectrum .js-plotly-plot")?._fullData?.[0]?.x?.length > 0');
+      await until('document.querySelector("#diag-trend .js-plotly-plot")?.data?.length > 0');
+      await until('document.querySelector("#diag-plot .js-plotly-plot")?.layout?.title?.text?.startsWith("Spectrum")');
     }
     if(path==='/history') {
       await evaluate('document.getElementById("load-history-btn").click()');
