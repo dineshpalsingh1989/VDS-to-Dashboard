@@ -1,6 +1,7 @@
 # Plan: teaching the IRIV Edge AI from real data
 
-Status: agreed, not started (2026-10-25). Nothing described here is built yet; today
+Status: agreed, not started (2026-10-25). Decision: training runs in Google Cloud, next to
+the data; GitHub holds only the code. Nothing described here is built yet; today
 nothing leaves the device and all data stays in SQLite on the IRIV.
 
 ## What already learns on the device
@@ -36,24 +37,27 @@ drive end against free end. Empty slots are allowed.
 | Stage | Where | Cost |
 |---|---|---|
 | Cases stored | Google Cloud Storage (BigQuery optional later, for reports only) | cents a month |
-| Training, at first | Your PC, or Google Colab / Kaggle notebooks | free |
-| Training and HAT build, automatic | GitHub Actions (public repository) | free |
-| Later, if wanted | Compute Engine VM or Vertex AI job, switched off after each run | about $1–5 a month |
+| Training and HAT build, automatic (chosen) | Google Cloud: a Compute Engine VM or Vertex AI job, weekly or monthly, switched off after each run | about $1–5 a month ($300 free credit for new accounts) |
+| Trying it out by hand | Your PC, or Google Colab | free |
+
+Customer cases never go to GitHub: the repository is public, so its job logs, job files
+and releases are public too.
 
 ## Steps to build (later)
 
 1. Collect machine cases with all channels, the opt-in setting, a download to look at
    them first, and the uploader to Cloud Storage.
 2. Retrain the small model on the Pi's processor overnight from confirmed cases.
-3. GitHub Actions job: train, build the HAT files (hailo8 and hailo8l), publish them.
+3. Google Cloud job: read all cases, train, test, build the HAT files (hailo8 and hailo8l),
+   and put the model files in a private models folder in Cloud Storage.
 4. On the IRIV: download new models, run them in shadow mode beside the current one,
    switch only if they agree better with people's feedback, roll back automatically.
 
 ## One-time steps for the owner
 
 1. Create a Hailo Developer Zone account and download the Dataflow Compiler.
-2. Check that Hailo's licence allows running the compiler on GitHub's or Google's machines.
-3. Keep the compiler in a private place and add the access key as a GitHub secret.
+2. Check that Hailo's licence allows running the compiler on Google Cloud machines.
+3. Create a Google Cloud project with a private Storage bucket, and keep the compiler there.
 4. Merge to `main` and push release tags.
 5. Each customer switches sharing on.
 
