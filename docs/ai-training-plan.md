@@ -96,6 +96,40 @@ with a one-time connection code that the owner creates per customer.
 - A short data agreement (what, why, how long, how to delete) shown and accepted on the
   page, recording who agreed and when.
 
+**Ask the cloud when unsure.** The Pi and HAT handle normal days alone, offline. The Pi
+sends one machine case (all its channels, setup, spectra and waveforms from that moment)
+only when it needs help: the rules and the HAT disagree, the best match is below about
+60 %, or the pattern has never been seen. The cloud compares it with the fingerprint
+library from all customers who allow it (similar search over short summaries, not raw
+signals) and with a bigger cloud-only model, and answers within minutes, for example
+"most similar: 7 confirmed outer race faults on 6205 bearings in pumps, 83 % similar;
+likely outer race, 81 %". Other customers' details are never shown. The Pi shows it in
+the bell window as "Cloud second opinion" and remembers the answer, so the same pattern
+is recognised on site afterwards and not sent again. The case is kept for training only
+if the customer allows examples, otherwise deleted after answering. Capped at about 50
+requests per device per day (about 50 KB each). Help requests are the most valuable cases
+to label, so they feed the next model release; the HAT gets smarter with each release and
+asks less often. The HAT itself never trains.
+
+**Three sharing levels** on Settings > AI learning:
+
+1. Learning only (default): setup, normal fingerprints and model changes; no signals leave the site.
+2. Ask the cloud when unsure: also sends a case when the AI needs help, then deletes it.
+3. Learning and examples: also keeps labelled cases with spectra and waveforms to improve the model.
+
+**Settings > AI HAT page** (IRIV only; can be built without the cloud part). The advisor is
+the only program that talks to the HAT; it reads the details and writes a small status
+file that the page shows.
+
+- Hardware: HAT detected or not, Hailo-8 (26 TOPS) or Hailo-8L (13 TOPS), serial number, temperature.
+- Software installed: Hailo firmware version, HailoRT version, driver loaded, and whether they match.
+- Model in use: file and version, build date, running on the HAT or the processor and why.
+- What it has learned: the fault types it knows, its score when trained, and how often it
+  agrees with the rules and with people's feedback on this site.
+- Recent opinions per channel; model history with dates and Undo.
+- Self-test button: runs test cases on the HAT and compares with the processor model.
+- With the cloud plan: pending help requests and the latest model available.
+
 ## Steps to build (later)
 
 1. Settings > AI learning page, connection code, the "sent" list, setup and normal
@@ -106,6 +140,9 @@ with a one-time connection code that the owner creates per customer.
    customers, devices and model releases.
 4. On the IRIV: download new models, run them in shadow mode beside the current one,
    switch only if they agree better with people's feedback, roll back automatically.
+5. Ask the cloud when unsure: help requests from the Pi, a Cloud Run service that searches
+   the fingerprint library and answers, "Cloud second opinion" in the bell window.
+6. Settings > AI HAT page (can come first; it does not need the cloud).
 
 ## One-time steps for the owner
 
